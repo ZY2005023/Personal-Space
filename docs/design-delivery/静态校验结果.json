@@ -1,0 +1,74 @@
+{
+  "date": "2026-11-02",
+  "checks": [
+    {
+      "name": "OpenAPI标准结构",
+      "status": "passed",
+      "detail": "openapi-spec-validator 0.9.0，3.1.1文档通过3.1结构校验"
+    },
+    {
+      "name": "版本固定",
+      "status": "passed",
+      "detail": "顶层openapi=3.1.1；不升级到3.2"
+    },
+    {
+      "name": "本地引用",
+      "status": "passed",
+      "detail": "504处$ref，全部可解析；无外部依赖"
+    },
+    {
+      "name": "操作ID与路径参数",
+      "status": "passed",
+      "detail": "48个operationId唯一，路径参数均定义且required"
+    },
+    {
+      "name": "认证与CSRF声明",
+      "status": "passed",
+      "detail": "所有管理操作声明会话及401/403；所有管理写入声明CSRF；公开操作不要求会话"
+    },
+    {
+      "name": "条件错误与Problem Details",
+      "status": "passed",
+      "detail": "所有条件操作声明412/428，错误响应统一application/problem+json"
+    },
+    {
+      "name": "发布状态码",
+      "status": "passed",
+      "detail": "首次和更新发布成功统一200"
+    },
+    {
+      "name": "关键副作用幂等",
+      "status": "passed",
+      "detail": "创建/发布/软删除/恢复/媒体上传/导出/备份均要求Idempotency-Key"
+    },
+    {
+      "name": "Schema结构",
+      "status": "passed",
+      "detail": "30个Schema通过Draft2020-12结构检查"
+    },
+    {
+      "name": "契约Schema正反例",
+      "status": "passed",
+      "detail": "12组正/反例通过；不等同于业务接口测试"
+    },
+    {
+      "name": "原型源文件",
+      "status": "passed",
+      "detail": "63份SVG XML可解析、尺寸与清单一致，均有PNG预览"
+    },
+    {
+      "name": "验收编号与待验证项",
+      "status": "passed",
+      "detail": "48例编号唯一，IV-01至IV-08全部有对应验收用例"
+    }
+  ],
+  "paths": 35,
+  "operations": 48,
+  "schemas": 30,
+  "refOccurrences": 504,
+  "schemaExamples": 12,
+  "boards": 63,
+  "acceptanceCases": 48,
+  "runtimeTestsExecuted": 0,
+  "implementationValidation": "IV-01 through IV-08 pending"
+}

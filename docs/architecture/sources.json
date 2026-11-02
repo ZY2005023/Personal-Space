@@ -1,0 +1,113 @@
+{
+  "retrievedDate": "2026-11-02",
+  "sources": [
+    {
+      "name": "nextauth-nextjs",
+      "url": "https://next-auth.js.org/configuration/nextjs",
+      "resolvedUrl": "https://next-auth.js.org/configuration/nextjs",
+      "bytes": 105194,
+      "sha256": "6d6243bf15bf51b3328c0119b7b26338808d1159359555468b0b120f3294d433",
+      "title": "Next.js | NextAuth.js",
+      "status": "retrieved"
+    },
+    {
+      "name": "nextauth-options",
+      "url": "https://next-auth.js.org/configuration/options",
+      "resolvedUrl": "https://next-auth.js.org/configuration/options",
+      "bytes": 138057,
+      "sha256": "bb5c3b52b90be8db4a221ba846423a06b29db5f1357fffd8f0ffd34e56ce7c90",
+      "title": "Options | NextAuth.js",
+      "status": "retrieved"
+    },
+    {
+      "name": "sharp-metadata",
+      "url": "https://sharp.pixelplumbing.com/api-output/",
+      "resolvedUrl": "https://sharp.pixelplumbing.com/api-output/",
+      "bytes": 198593,
+      "sha256": "3bf25d594e16f92b1e2f26c5b339c002f5d0a33f579cdc4c7a0e4b2ffa8e6528",
+      "title": "Output options | sharp",
+      "status": "retrieved"
+    },
+    {
+      "name": "postgres-locks",
+      "url": "https://www.postgresql.org/docs/18/sql-select.html",
+      "resolvedUrl": "https://www.postgresql.org/docs/18/sql-select.html",
+      "bytes": 118042,
+      "sha256": "876b2978f26650506af5fb36cf99135a15c8c68b4d979c3a784ee44f84d1e6fc",
+      "title": "PostgreSQL: Documentation: 18: SELECT",
+      "status": "retrieved"
+    },
+    {
+      "name": "postgres-backup",
+      "url": "https://www.postgresql.org/docs/18/app-pgdump.html",
+      "resolvedUrl": "https://www.postgresql.org/docs/18/app-pgdump.html",
+      "bytes": 89919,
+      "sha256": "1a32251a83e6dec1a967dbfc93e1add0ba99bfe84fae471ea56613e6e7306d30",
+      "title": "PostgreSQL: Documentation: 18: pg_dump",
+      "status": "retrieved"
+    },
+    {
+      "name": "restic-backup",
+      "url": "https://restic.readthedocs.io/en/stable/040_backup.html",
+      "resolvedUrl": "https://restic.readthedocs.io/en/stable/040_backup.html",
+      "bytes": 71759,
+      "sha256": "e2019cf43be6a60c5d2238e7ba4de17bf9a6d8d735799be00929a69160608ae0",
+      "title": "Backing up &mdash; restic 0.19.1\n documentation",
+      "status": "retrieved"
+    },
+    {
+      "name": "restic-check",
+      "url": "https://restic.readthedocs.io/en/stable/045_working_with_repos.html",
+      "resolvedUrl": "https://restic.readthedocs.io/en/stable/045_working_with_repos.html",
+      "bytes": 61215,
+      "sha256": "d76d004ededbb3f7d5fdaa4510dd88e809d503ed8f4fd27dd5db5534c9c69880",
+      "title": "Working with repositories &mdash; restic 0.19.1\n documentation",
+      "status": "retrieved"
+    },
+    {
+      "name": "caddy-https",
+      "url": "https://caddyserver.com/docs/automatic-https",
+      "resolvedUrl": "https://caddyserver.com/docs/automatic-https",
+      "bytes": 75238,
+      "sha256": "d1c1efd5252b49f43ab854c8639fad8e57d18459854c75869622c434b816bc7c",
+      "title": "Automatic HTTPS &mdash; Caddy Documentation",
+      "status": "retrieved"
+    },
+    {
+      "name": "node-releases",
+      "url": "https://nodejs.org/en/about/previous-releases",
+      "resolvedUrl": "https://nodejs.org/en/about/previous-releases",
+      "bytes": 286391,
+      "sha256": "c430673d053eb395ac521ede92b66b396f7926c8558472339ac784e3b202a3e7",
+      "title": "Node.js — Node.js Releases",
+      "status": "retrieved"
+    },
+    {
+      "name": "postgres-search",
+      "url": "https://www.postgresql.org/docs/18/pgtrgm.html",
+      "resolvedUrl": "https://www.postgresql.org/docs/18/pgtrgm.html",
+      "bytes": 42150,
+      "sha256": "618393ea27c71dddd444e71e84cca6f4a0c91275f5ea0b5ad90be5f6728203a9",
+      "title": "PostgreSQL: Documentation: 18: F.35. pg_trgm — support for similarity of text using trigram matching",
+      "status": "retrieved"
+    },
+    {
+      "name": "s3-sdk",
+      "url": "https://docs.aws.amazon.com/sdk-for-javascript/v3/developer-guide/javascript_s3_code_examples.html",
+      "resolvedUrl": "https://docs.aws.amazon.com/sdk-for-javascript/v3/developer-guide/javascript_s3_code_examples.html",
+      "bytes": 261642,
+      "sha256": "82f334c8077aef137a19836c7db246f91c079c0ef15474dcfedb6e6e8907d25a",
+      "title": "Amazon S3 examples using SDK for JavaScript (v3) - AWS SDK for JavaScript",
+      "status": "retrieved"
+    },
+    {
+      "name": "password-storage",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html",
+      "resolvedUrl": "https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html",
+      "bytes": 96018,
+      "sha256": "019b6fc5f614c43f08ec93eaa7c7c87f98fe6dc5dbed2ba05ac34609c3419885",
+      "title": "Password Storage - OWASP Cheat Sheet Series",
+      "status": "retrieved"
+    }
+  ]
+}

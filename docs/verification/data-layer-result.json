@@ -1,0 +1,53 @@
+{
+  "date": "2026-11-02",
+  "batch": "N2",
+  "models": [
+    "AdminUser",
+    "RecoveryCode",
+    "LoginThrottle",
+    "Content",
+    "ContentDraft",
+    "ContentRevision",
+    "ContentPublication",
+    "ContentRoute",
+    "Category",
+    "Tag",
+    "Media",
+    "IdempotencyRecord",
+    "AuditLog",
+    "MediaVariant",
+    "DraftMedia",
+    "RevisionMedia",
+    "ContentMedia",
+    "DraftCategory",
+    "RevisionCategory",
+    "DraftTag",
+    "RevisionTag",
+    "ContentTag",
+    "ContentSearchDocument",
+    "OperationJob",
+    "OutboxEvent",
+    "BackupRun",
+    "BackupCopy",
+    "RestoreDrill",
+    "SystemSetting"
+  ],
+  "modelCount": 29,
+  "unitTests": {
+    "passed": 40,
+    "realDatabase": false
+  },
+  "readOnlyHttpChecks": {
+    "passed": 16
+  },
+  "authRejectionCompatibility": "passed",
+  "typecheck": "passed",
+  "prismaValidate": "passed",
+  "productionBuild": "passed",
+  "frozenDesignHashEntriesUnchanged": 137,
+  "databaseCreated": false,
+  "migrationGenerated": false,
+  "deployed": false,
+  "realSqlAndConcurrencyVerified": false,
+  "remainingPhysicalConstraints": "prisma/CONSTRAINTS.md"
+}

@@ -1,0 +1,54 @@
+{
+  "date": "2026-11-02",
+  "previousAuthVersion": "5.0.0-beta.32",
+  "selectedAuthVersion": "4.24.15",
+  "registry": "https://registry.npmjs.org/next-auth/4.24.15",
+  "peerDependencies": {
+    "next": "^12.2.5 || ^13 || ^14 || ^15 || ^16",
+    "react": "^17.0.2 || ^18 || ^19",
+    "react-dom": "^17.0.2 || ^18 || ^19"
+  },
+  "sourceInspected": "next-auth-4.24.15.tgz/package/next/index.js",
+  "observedAsyncAccess": [
+    "await context.params",
+    "await cookies()",
+    "await headers()"
+  ],
+  "packageSha256": "262b7d72129fc013ea34939b0e766de614cc97270892dc6afad193eec8301d5c",
+  "directDependencies": {
+    "@node-rs/argon2": "2.2.2",
+    "@prisma/adapter-pg": "7.10.1",
+    "@prisma/client": "7.10.1",
+    "next": "16.4.4",
+    "next-auth": "4.24.15",
+    "pg": "8.23.1",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "react-markdown": "10.1.0",
+    "remark-gfm": "4.0.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "@types/pg": "8.23.1",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "prisma": "7.10.1",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3"
+  },
+  "runtimeChecks": [
+    "provider discovery",
+    "CSRF endpoint and cookie",
+    "invalid credentials callback without 5xx",
+    "no session cookie after rejected credentials",
+    "anonymous session has no user",
+    "protected content returns 401"
+  ],
+  "notVerified": [
+    "valid admin login",
+    "real database connection or mutation",
+    "MFA enrollment or recovery",
+    "session expiration and revocation with real users"
+  ]
+}

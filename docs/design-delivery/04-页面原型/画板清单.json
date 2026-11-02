@@ -1,0 +1,317 @@
+[
+  {
+    "name": "D01-首页",
+    "width": 1440,
+    "height": 1040
+  },
+  {
+    "name": "D02-生活知识列表",
+    "width": 1440,
+    "height": 1040
+  },
+  {
+    "name": "D03-文章阅读",
+    "width": 1440,
+    "height": 1040
+  },
+  {
+    "name": "D04-相册网格",
+    "width": 1440,
+    "height": 1040
+  },
+  {
+    "name": "D05-相册详情",
+    "width": 1440,
+    "height": 1040
+  },
+  {
+    "name": "D06-沉浸大图",
+    "width": 1440,
+    "height": 1040
+  },
+  {
+    "name": "D07-搜索",
+    "width": 1440,
+    "height": 1040
+  },
+  {
+    "name": "D08-后台概览",
+    "width": 1440,
+    "height": 1040
+  },
+  {
+    "name": "D09-后台内容列表",
+    "width": 1440,
+    "height": 1040
+  },
+  {
+    "name": "D10-文章编辑",
+    "width": 1440,
+    "height": 1040
+  },
+  {
+    "name": "D11-相册编辑",
+    "width": 1440,
+    "height": 1040
+  },
+  {
+    "name": "D12-发布确认",
+    "width": 1440,
+    "height": 1040
+  },
+  {
+    "name": "D13-历史版本",
+    "width": 1440,
+    "height": 1040
+  },
+  {
+    "name": "D14-媒体库",
+    "width": 1440,
+    "height": 1040
+  },
+  {
+    "name": "D15-分类标签",
+    "width": 1440,
+    "height": 1040
+  },
+  {
+    "name": "D16-回收站",
+    "width": 1440,
+    "height": 1040
+  },
+  {
+    "name": "D17-导出备份",
+    "width": 1440,
+    "height": 1040
+  },
+  {
+    "name": "D18-登录与双因素",
+    "width": 1440,
+    "height": 1040
+  },
+  {
+    "name": "D19-安全设置",
+    "width": 1440,
+    "height": 1040
+  },
+  {
+    "name": "D20-审计记录",
+    "width": 1440,
+    "height": 1040
+  },
+  {
+    "name": "D29-发布设置",
+    "width": 1440,
+    "height": 1040
+  },
+  {
+    "name": "D30-生活记录编辑",
+    "width": 1440,
+    "height": 1040
+  },
+  {
+    "name": "D31-密码登录",
+    "width": 1440,
+    "height": 1040
+  },
+  {
+    "name": "D32-生活记录详情",
+    "width": 1440,
+    "height": 1040
+  },
+  {
+    "name": "M01-首页",
+    "width": 390,
+    "height": 1040
+  },
+  {
+    "name": "M02-生活知识列表",
+    "width": 390,
+    "height": 1040
+  },
+  {
+    "name": "M03-文章阅读",
+    "width": 390,
+    "height": 1040
+  },
+  {
+    "name": "M04-相册网格",
+    "width": 390,
+    "height": 1040
+  },
+  {
+    "name": "M05-相册详情",
+    "width": 390,
+    "height": 1040
+  },
+  {
+    "name": "M06-沉浸大图",
+    "width": 390,
+    "height": 1040
+  },
+  {
+    "name": "M07-搜索",
+    "width": 390,
+    "height": 1040
+  },
+  {
+    "name": "M08-后台概览",
+    "width": 390,
+    "height": 1040
+  },
+  {
+    "name": "M09-后台内容列表",
+    "width": 390,
+    "height": 1040
+  },
+  {
+    "name": "M10-文章编辑",
+    "width": 390,
+    "height": 1040
+  },
+  {
+    "name": "M11-相册编辑",
+    "width": 390,
+    "height": 1040
+  },
+  {
+    "name": "M12-发布确认",
+    "width": 390,
+    "height": 1040
+  },
+  {
+    "name": "M13-历史版本",
+    "width": 390,
+    "height": 1040
+  },
+  {
+    "name": "M14-媒体库",
+    "width": 390,
+    "height": 1040
+  },
+  {
+    "name": "M15-分类标签",
+    "width": 390,
+    "height": 1040
+  },
+  {
+    "name": "M16-回收站",
+    "width": 390,
+    "height": 1040
+  },
+  {
+    "name": "M17-导出备份",
+    "width": 390,
+    "height": 1040
+  },
+  {
+    "name": "M18-登录与双因素",
+    "width": 390,
+    "height": 1040
+  },
+  {
+    "name": "M19-安全设置",
+    "width": 390,
+    "height": 1040
+  },
+  {
+    "name": "M20-审计记录",
+    "width": 390,
+    "height": 1040
+  },
+  {
+    "name": "M29-发布设置",
+    "width": 390,
+    "height": 1040
+  },
+  {
+    "name": "M30-生活记录编辑",
+    "width": 390,
+    "height": 1040
+  },
+  {
+    "name": "M31-密码登录",
+    "width": 390,
+    "height": 1040
+  },
+  {
+    "name": "M32-生活记录详情",
+    "width": 390,
+    "height": 1040
+  },
+  {
+    "name": "D21-保存冲突",
+    "width": 1440,
+    "height": 900
+  },
+  {
+    "name": "D22-空状态",
+    "width": 1440,
+    "height": 900
+  },
+  {
+    "name": "D23-加载",
+    "width": 1440,
+    "height": 900
+  },
+  {
+    "name": "D24-失败",
+    "width": 1440,
+    "height": 900
+  },
+  {
+    "name": "D25-公开404",
+    "width": 1440,
+    "height": 900
+  },
+  {
+    "name": "D26-会话过期",
+    "width": 1440,
+    "height": 900
+  },
+  {
+    "name": "D27-后台403",
+    "width": 1440,
+    "height": 900
+  },
+  {
+    "name": "M21-保存冲突",
+    "width": 390,
+    "height": 844
+  },
+  {
+    "name": "M22-空状态",
+    "width": 390,
+    "height": 844
+  },
+  {
+    "name": "M23-加载",
+    "width": 390,
+    "height": 844
+  },
+  {
+    "name": "M24-失败",
+    "width": 390,
+    "height": 844
+  },
+  {
+    "name": "M25-公开404",
+    "width": 390,
+    "height": 844
+  },
+  {
+    "name": "M26-会话过期",
+    "width": 390,
+    "height": 844
+  },
+  {
+    "name": "M27-后台403",
+    "width": 390,
+    "height": 844
+  },
+  {
+    "name": "M28-后台导航抽屉",
+    "width": 390,
+    "height": 844
+  }
+]

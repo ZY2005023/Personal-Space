@@ -1,0 +1,15 @@
+{
+  "date": "2026-11-02",
+  "openapi": "3.1.1",
+  "contractVersion": "1.0.1",
+  "standardStructure": "passed",
+  "referenceOccurrences": 553,
+  "unresolvedReferences": 0,
+  "paths": 35,
+  "operationIds": 48,
+  "uniqueOperationIds": true,
+  "onlyRecordedSemanticChanges": true,
+  "exactDependenciesMatchLockfile": true,
+  "fullV1Implemented": false,
+  "databaseCreated": false
+}

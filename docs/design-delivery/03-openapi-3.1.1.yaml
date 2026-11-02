@@ -1,0 +1,3273 @@
+openapi: 3.1.1
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+info:
+  title: Personal Space V1.0 API
+  version: 1.0.0
+  description: 2026-11-02 设计交付契约；不是已运行服务。Auth.js提供方端点不由业务API重建。所有x-contract-rules为规范性规则。
+servers:
+- url: /api/v1
+  description: 同源相对前缀，无部署地址
+tags:
+- name: 公开
+- name: 管理
+security: []
+x-contract-rules:
+  baseline: 最终冻结记录优先；字段、路径及验证参数为交付细化，见01/02/04/05。
+  authentication: 同一Auth.js会话；业务API拒绝MFA未完成会话。写操作同源Origin及X-CSRF-Token检查，敏感任务需短时重新认证。逻辑cookie名需IV-01映射，不能据此另建认证。
+  etag: draft ETag为强引用如"d-<contentId>-<revisionNumber>"；state ETag如"s-<contentId>-<stateVersion>"；分类/标签/设置ETag基于规范表示SHA256。GET返回ETag或明确响应字段。拒绝弱ETag与通配符。
+  publish: If-Match为draft.etag，expectedStateEtag为state.stateEtag；缺少任一发布条件428（优先于一般输入验证），不匹配412；成功原子推进草稿与状态版本。标题纯空白422；ARTICLE/MOMENT正文不得空；ALBUM至少一张ALBUM_PHOTO。
+  payload: type/module创建后不可变。placements中placementId唯一；coverMediaId必须有唯一COVER项；原文图片用受控placement标识解析。数组下标为排序来源。taxonomySnapshot只读，由服务端补齐。desiredPath前缀匹配module且不占系统路径。所有引用资源存在且可用。
+  idempotency: 同管理员+方法+规范路径+键限定范围；摘要包含body及条件。已完成同键同参先重放再检查过期版本，但先重新鉴权；同键异参409，处理中409。默认保留24h。客户端超时使用原键和原请求重试。
+  visibility: 所有公开响应只来自当前指针且实时检查PUBLISHED/PUBLIC/未删除。旧路径先授权后重定向；匿名无权404。转私密/撤回/软删除立即拒绝新的匿名请求；不能等outbox缓存清除。
+  cache: 公开正文/派生媒体以及后台响应采用private,no-store的保守交付设计；不提供可绕过撤销检查的静态对象地址。缓存性能优化必须满足IV-04。
+  pagination: 列表data数组+meta(nextCursor,hasMore)，cursor为绑定筛选与排序的不透明值；无效或筛选改变400；最后nextCursor=null/hasMore=false。管理列表updatedAt
+    DESC/id DESC，历史versionNumber DESC，其他列表createdAt DESC/id DESC；分类sortOrder ASC/id ASC。
+  serialization: 日期RFC3339 UTC，UUID字符串，API camelCase，DB snake_case；额外JSON字段422；空白搜索400；业务约束错误422。成功200/201/202包data（列表另meta）；204/308及二进制例外。
+  pending: IV-01 Auth.js精确配置与敏感动作集成；IV-02 PG/Prisma约束；IV-03搜索；IV-04权限/缓存；IV-05设备；IV-06并发/租约；IV-07备份参数；IV-08媒体限额/性能/无障碍。
+paths:
+  /contents:
+    get:
+      operationId: listPublicContents
+      summary: 公开内容列表
+      description: 只读有效公开版本；发布时间 DESC、ID DESC 稳定游标。
+      tags:
+      - 公开
+      security: []
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ContentSummary'
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+                required:
+                - data
+                - meta
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+      parameters:
+      - &id002
+        name: type
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - MOMENT
+          - ARTICLE
+          - ALBUM
+      - &id003
+        name: module
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - LIFE
+          - KNOWLEDGE
+      - &id004
+        name: categoryId
+        in: query
+        required: false
+        schema: &id001
+          type: string
+          format: uuid
+      - &id005
+        name: tagId
+        in: query
+        required: false
+        schema: *id001
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+  /contents/{contentId}:
+    get:
+      operationId: getPublicContent
+      summary: 公开详情
+      description: 公开详情
+      tags:
+      - 公开
+      security: []
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/PublishedContent'
+                required:
+                - data
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+      parameters:
+      - name: contentId
+        in: path
+        required: true
+        schema: *id001
+  /search:
+    get:
+      operationId: searchPublicContents
+      summary: 中文公开搜索
+      description: 空白关键词400；只检索有效公开版本。相关性降序、发布时间降序、ID降序。短词策略IV-03。
+      tags:
+      - 公开
+      security: []
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ContentSummary'
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+                required:
+                - data
+                - meta
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+      parameters:
+      - name: q
+        in: query
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 100
+      - *id002
+      - *id003
+      - *id004
+      - *id005
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+  /categories:
+    get:
+      operationId: listPublicCategories
+      summary: 有公开内容的分类
+      description: 有公开内容的分类
+      tags:
+      - 公开
+      security: []
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Category'
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+                required:
+                - data
+                - meta
+          headers:
+            ETag:
+              description: 强 ETag，保存下一次条件请求使用
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+      parameters:
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+  /tags:
+    get:
+      operationId: listPublicTags
+      summary: 有公开内容的标签
+      description: 有公开内容的标签
+      tags:
+      - 公开
+      security: []
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Tag'
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+                required:
+                - data
+                - meta
+          headers:
+            ETag:
+              description: 强 ETag，保存下一次条件请求使用
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+      parameters:
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+  /routes/resolve:
+    get:
+      operationId: resolveRoute
+      summary: 解析公开规范路径或旧路径
+      description: 规范路径200；ALIAS在权限验证后308；私密/撤回/删除/不存在404。
+      tags:
+      - 公开
+      security: []
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/RouteResult'
+                required:
+                - data
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+        '308':
+          description: 直接至同一内容当前规范路径，无重定向链
+          headers:
+            Location:
+              required: true
+              schema:
+                type: string
+      parameters:
+      - name: path
+        in: query
+        required: true
+        schema:
+          type: string
+          maxLength: 500
+  /contents/{contentId}/placements/{placementId}/image:
+    get:
+      operationId: getPublicImage
+      summary: 逐请求授权的公开派生图
+      description: 检查当前发布快照中 placement 及有效权限；媒体原图不提供公开接口；禁止仅凭mediaId读取。受控响应 private,no-store。
+      tags:
+      - 公开
+      security: []
+      responses:
+        '200':
+          description: 清理敏感元数据后的派生图二进制
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+      parameters:
+      - name: variant
+        in: query
+        required: true
+        schema:
+          type: string
+          enum:
+          - THUMBNAIL
+          - DISPLAY
+      - name: contentId
+        in: path
+        required: true
+        schema: *id001
+      - name: placementId
+        in: path
+        required: true
+        schema: *id001
+  /admin/contents:
+    get:
+      operationId: listAdminContents
+      summary: 后台内容列表
+      description: 后台内容列表
+      tags:
+      - 管理
+      security:
+      - adminSession: []
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AdminSummary'
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+                required:
+                - data
+                - meta
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '401':
+          $ref: '#/components/responses/Problem401'
+        '403':
+          $ref: '#/components/responses/Problem403'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+      parameters:
+      - *id002
+      - *id003
+      - *id004
+      - *id005
+      - name: deleted
+        in: query
+        required: false
+        schema: &id006
+          type: boolean
+      - name: q
+        in: query
+        required: false
+        schema:
+          type: string
+          maxLength: 100
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+    post:
+      operationId: createContent
+      summary: 创建内容与草稿
+      description: MOMENT/ALBUM仅LIFE；初始PRIVATE/NEVER_PUBLISHED；空草稿由服务端建立，路径初始为模块/id。
+      tags:
+      - 管理
+      security:
+      - adminSession: []
+      responses:
+        '201':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ContentAdmin'
+                required:
+                - data
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '401':
+          $ref: '#/components/responses/Problem401'
+        '403':
+          $ref: '#/components/responses/Problem403'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '409':
+          $ref: '#/components/responses/Problem409'
+        '422':
+          $ref: '#/components/responses/Problem422'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+      parameters:
+      - $ref: '#/components/parameters/CSRF'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                type:
+                  type: string
+                  enum:
+                  - MOMENT
+                  - ARTICLE
+                  - ALBUM
+                module:
+                  type: string
+                  enum:
+                  - LIFE
+                  - KNOWLEDGE
+              required:
+              - type
+              - module
+  /admin/contents/{contentId}:
+    get:
+      operationId: getAdminContent
+      summary: 读取状态与工作草稿
+      description: 读取状态与工作草稿
+      tags:
+      - 管理
+      security:
+      - adminSession: []
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ContentAdmin'
+                required:
+                - data
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '401':
+          $ref: '#/components/responses/Problem401'
+        '403':
+          $ref: '#/components/responses/Problem403'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+      parameters:
+      - name: contentId
+        in: path
+        required: true
+        schema: *id001
+  /admin/contents/{contentId}/state:
+    get:
+      operationId: getContentState
+      summary: 读取线上状态及ETag
+      description: 读取线上状态及ETag
+      tags:
+      - 管理
+      security:
+      - adminSession: []
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ContentState'
+                required:
+                - data
+          headers:
+            ETag:
+              description: 强 ETag，保存下一次条件请求使用
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '401':
+          $ref: '#/components/responses/Problem401'
+        '403':
+          $ref: '#/components/responses/Problem403'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+      parameters:
+      - name: contentId
+        in: path
+        required: true
+        schema: *id001
+  /admin/contents/{contentId}/draft:
+    get:
+      operationId: getDraft
+      summary: 读取工作草稿及ETag
+      description: 读取工作草稿及ETag
+      tags:
+      - 管理
+      security:
+      - adminSession: []
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Draft'
+                required:
+                - data
+          headers:
+            ETag:
+              description: 强 ETag，保存下一次条件请求使用
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '401':
+          $ref: '#/components/responses/Problem401'
+        '403':
+          $ref: '#/components/responses/Problem403'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+      parameters:
+      - name: contentId
+        in: path
+        required: true
+        schema: *id001
+    put:
+      operationId: saveDraft
+      summary: 条件保存完整工作草稿
+      description: If-Match为草稿ETag；仅草稿及引用更新。类型/模块不可通过本接口改变；placementId唯一，封面与placement对应。
+      tags:
+      - 管理
+      security:
+      - adminSession: []
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Draft'
+                required:
+                - data
+          headers:
+            ETag:
+              description: 强 ETag，保存下一次条件请求使用
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '401':
+          $ref: '#/components/responses/Problem401'
+        '403':
+          $ref: '#/components/responses/Problem403'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '409':
+          $ref: '#/components/responses/Problem409'
+        '412':
+          $ref: '#/components/responses/Problem412'
+        '422':
+          $ref: '#/components/responses/Problem422'
+        '428':
+          $ref: '#/components/responses/Problem428'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+      parameters:
+      - name: contentId
+        in: path
+        required: true
+        schema: *id001
+      - $ref: '#/components/parameters/CSRF'
+      - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PayloadInput'
+  /admin/contents/{contentId}/publish:
+    post:
+      operationId: publishContent
+      summary: 双版本确认发布
+      description: If-Match=draft.etag，expectedStateEtag=state.stateEtag；缺任一条件428，版本过期412。新快照与投影/路由/搜索/草稿基线原子提交；首次或更新均200。同幂等重放先于版本重查，但必须重新鉴权。
+      tags:
+      - 管理
+      security:
+      - adminSession: []
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/PublishResult'
+                required:
+                - data
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '401':
+          $ref: '#/components/responses/Problem401'
+        '403':
+          $ref: '#/components/responses/Problem403'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '409':
+          $ref: '#/components/responses/Problem409'
+        '412':
+          $ref: '#/components/responses/Problem412'
+        '422':
+          $ref: '#/components/responses/Problem422'
+        '428':
+          $ref: '#/components/responses/Problem428'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+      parameters:
+      - name: contentId
+        in: path
+        required: true
+        schema: *id001
+      - $ref: '#/components/parameters/CSRF'
+      - $ref: '#/components/parameters/IfMatch'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PublishInput'
+  /admin/contents/{contentId}/make-private:
+    post:
+      operationId: makeprivateContent
+      summary: 转为私密
+      description: If-Match为state.stateEtag；线上stateVersion+1，草稿不发布。restore同时将草稿desiredVisibility置PRIVATE且推进草稿版本；无效状态409。
+      tags:
+      - 管理
+      security:
+      - adminSession: []
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ContentAdmin'
+                required:
+                - data
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '401':
+          $ref: '#/components/responses/Problem401'
+        '403':
+          $ref: '#/components/responses/Problem403'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '409':
+          $ref: '#/components/responses/Problem409'
+        '412':
+          $ref: '#/components/responses/Problem412'
+        '422':
+          $ref: '#/components/responses/Problem422'
+        '428':
+          $ref: '#/components/responses/Problem428'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+      parameters:
+      - name: contentId
+        in: path
+        required: true
+        schema: *id001
+      - $ref: '#/components/parameters/CSRF'
+      - $ref: '#/components/parameters/IfMatch'
+      - $ref: '#/components/parameters/IdempotencyKey'
+  /admin/contents/{contentId}/unpublish:
+    post:
+      operationId: unpublishContent
+      summary: 撤回发布
+      description: If-Match为state.stateEtag；线上stateVersion+1，草稿不发布。restore同时将草稿desiredVisibility置PRIVATE且推进草稿版本；无效状态409。
+      tags:
+      - 管理
+      security:
+      - adminSession: []
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ContentAdmin'
+                required:
+                - data
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '401':
+          $ref: '#/components/responses/Problem401'
+        '403':
+          $ref: '#/components/responses/Problem403'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '409':
+          $ref: '#/components/responses/Problem409'
+        '412':
+          $ref: '#/components/responses/Problem412'
+        '422':
+          $ref: '#/components/responses/Problem422'
+        '428':
+          $ref: '#/components/responses/Problem428'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+      parameters:
+      - name: contentId
+        in: path
+        required: true
+        schema: *id001
+      - $ref: '#/components/parameters/CSRF'
+      - $ref: '#/components/parameters/IfMatch'
+      - $ref: '#/components/parameters/IdempotencyKey'
+  /admin/contents/{contentId}/trash:
+    post:
+      operationId: trashContent
+      summary: 软删除到回收站
+      description: If-Match为state.stateEtag；线上stateVersion+1，草稿不发布。restore同时将草稿desiredVisibility置PRIVATE且推进草稿版本；无效状态409。
+      tags:
+      - 管理
+      security:
+      - adminSession: []
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ContentAdmin'
+                required:
+                - data
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '401':
+          $ref: '#/components/responses/Problem401'
+        '403':
+          $ref: '#/components/responses/Problem403'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '409':
+          $ref: '#/components/responses/Problem409'
+        '412':
+          $ref: '#/components/responses/Problem412'
+        '422':
+          $ref: '#/components/responses/Problem422'
+        '428':
+          $ref: '#/components/responses/Problem428'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+      parameters:
+      - name: contentId
+        in: path
+        required: true
+        schema: *id001
+      - $ref: '#/components/parameters/CSRF'
+      - $ref: '#/components/parameters/IfMatch'
+      - $ref: '#/components/parameters/IdempotencyKey'
+  /admin/contents/{contentId}/restore:
+    post:
+      operationId: restoreContent
+      summary: 从回收站恢复为私密
+      description: If-Match为state.stateEtag；线上stateVersion+1，草稿不发布。restore同时将草稿desiredVisibility置PRIVATE且推进草稿版本；无效状态409。
+      tags:
+      - 管理
+      security:
+      - adminSession: []
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ContentAdmin'
+                required:
+                - data
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '401':
+          $ref: '#/components/responses/Problem401'
+        '403':
+          $ref: '#/components/responses/Problem403'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '409':
+          $ref: '#/components/responses/Problem409'
+        '412':
+          $ref: '#/components/responses/Problem412'
+        '422':
+          $ref: '#/components/responses/Problem422'
+        '428':
+          $ref: '#/components/responses/Problem428'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+      parameters:
+      - name: contentId
+        in: path
+        required: true
+        schema: *id001
+      - $ref: '#/components/parameters/CSRF'
+      - $ref: '#/components/parameters/IfMatch'
+      - $ref: '#/components/parameters/IdempotencyKey'
+  /admin/contents/{contentId}/revisions:
+    get:
+      operationId: listRevisions
+      summary: 不可变历史版本
+      description: 不可变历史版本
+      tags:
+      - 管理
+      security:
+      - adminSession: []
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Revision'
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+                required:
+                - data
+                - meta
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '401':
+          $ref: '#/components/responses/Problem401'
+        '403':
+          $ref: '#/components/responses/Problem403'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+      parameters:
+      - name: contentId
+        in: path
+        required: true
+        schema: *id001
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+    post:
+      operationId: createManualSnapshot
+      summary: 创建手动快照
+      description: 检查草稿ETag；允许不完整草稿；不推进正式发布序号，不改变线上。
+      tags:
+      - 管理
+      security:
+      - adminSession: []
+      responses:
+        '201':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Revision'
+                required:
+                - data
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '401':
+          $ref: '#/components/responses/Problem401'
+        '403':
+          $ref: '#/components/responses/Problem403'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '409':
+          $ref: '#/components/responses/Problem409'
+        '412':
+          $ref: '#/components/responses/Problem412'
+        '422':
+          $ref: '#/components/responses/Problem422'
+        '428':
+          $ref: '#/components/responses/Problem428'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+      parameters:
+      - name: contentId
+        in: path
+        required: true
+        schema: *id001
+      - $ref: '#/components/parameters/CSRF'
+      - $ref: '#/components/parameters/IfMatch'
+      - $ref: '#/components/parameters/IdempotencyKey'
+  /admin/contents/{contentId}/revisions/{revisionId}:
+    get:
+      operationId: getRevision
+      summary: 读取所属内容的历史快照
+      description: 读取所属内容的历史快照
+      tags:
+      - 管理
+      security:
+      - adminSession: []
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Revision'
+                required:
+                - data
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '401':
+          $ref: '#/components/responses/Problem401'
+        '403':
+          $ref: '#/components/responses/Problem403'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+      parameters:
+      - name: contentId
+        in: path
+        required: true
+        schema: *id001
+      - name: revisionId
+        in: path
+        required: true
+        schema: *id001
+  /admin/contents/{contentId}/revisions/{revisionId}/restore:
+    post:
+      operationId: restoreRevision
+      summary: 恢复历史至工作草稿
+      description: 检查草稿ETag、版本归属及媒体存在；仅生成新的工作草稿状态，线上不变。
+      tags:
+      - 管理
+      security:
+      - adminSession: []
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Draft'
+                required:
+                - data
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '401':
+          $ref: '#/components/responses/Problem401'
+        '403':
+          $ref: '#/components/responses/Problem403'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '409':
+          $ref: '#/components/responses/Problem409'
+        '412':
+          $ref: '#/components/responses/Problem412'
+        '422':
+          $ref: '#/components/responses/Problem422'
+        '428':
+          $ref: '#/components/responses/Problem428'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+      parameters:
+      - name: contentId
+        in: path
+        required: true
+        schema: *id001
+      - name: revisionId
+        in: path
+        required: true
+        schema: *id001
+      - $ref: '#/components/parameters/CSRF'
+      - $ref: '#/components/parameters/IfMatch'
+      - $ref: '#/components/parameters/IdempotencyKey'
+  /admin/media:
+    get:
+      operationId: listMedia
+      summary: 媒体库
+      description: 媒体库
+      tags:
+      - 管理
+      security:
+      - adminSession: []
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Media'
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+                required:
+                - data
+                - meta
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '401':
+          $ref: '#/components/responses/Problem401'
+        '403':
+          $ref: '#/components/responses/Problem403'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - UPLOADING
+          - PROCESSING
+          - READY
+          - FAILED
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+    post:
+      operationId: uploadMedia
+      summary: 上传媒体并建立处理任务
+      description: multipart文件；服务端魔数/解码/限额校验；同键以文件摘要判等。限额未配置则禁止上传，不能无限制接收。
+      tags:
+      - 管理
+      security:
+      - adminSession: []
+      responses:
+        '202':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/UploadAccepted'
+                required:
+                - data
+          headers:
+            Location:
+              description: /api/v1/admin/jobs/{jobId}
+              schema:
+                type: string
+            Retry-After:
+              schema:
+                type: integer
+                minimum: 1
+              description: 建议轮询间隔秒
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '401':
+          $ref: '#/components/responses/Problem401'
+        '403':
+          $ref: '#/components/responses/Problem403'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '409':
+          $ref: '#/components/responses/Problem409'
+        '422':
+          $ref: '#/components/responses/Problem422'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+        '413':
+          $ref: '#/components/responses/Problem413'
+        '415':
+          $ref: '#/components/responses/Problem415'
+      parameters:
+      - $ref: '#/components/parameters/CSRF'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                file:
+                  type: string
+                  format: binary
+              required:
+              - file
+  /admin/media/{mediaId}:
+    get:
+      operationId: getMedia
+      summary: 媒体状态与安全元数据
+      description: 媒体状态与安全元数据
+      tags:
+      - 管理
+      security:
+      - adminSession: []
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Media'
+                required:
+                - data
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '401':
+          $ref: '#/components/responses/Problem401'
+        '403':
+          $ref: '#/components/responses/Problem403'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+      parameters:
+      - name: mediaId
+        in: path
+        required: true
+        schema: *id001
+    delete:
+      operationId: deleteMedia
+      summary: 删除无引用媒体
+      description: 锁媒体行并检查草稿/当前/历史全部引用，任一存在409；不级联删历史。
+      tags:
+      - 管理
+      security:
+      - adminSession: []
+      responses:
+        '204':
+          description: 成功
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '401':
+          $ref: '#/components/responses/Problem401'
+        '403':
+          $ref: '#/components/responses/Problem403'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '409':
+          $ref: '#/components/responses/Problem409'
+        '422':
+          $ref: '#/components/responses/Problem422'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+      parameters:
+      - name: mediaId
+        in: path
+        required: true
+        schema: *id001
+      - $ref: '#/components/parameters/CSRF'
+      - $ref: '#/components/parameters/IdempotencyKey'
+  /admin/media/{mediaId}/original:
+    get:
+      operationId: getOriginal
+      summary: 管理员读取受保护原图
+      description: 管理员读取受保护原图
+      tags:
+      - 管理
+      security:
+      - adminSession: []
+      responses:
+        '200':
+          description: 原图文件；无公共存储地址
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '401':
+          $ref: '#/components/responses/Problem401'
+        '403':
+          $ref: '#/components/responses/Problem403'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+      parameters:
+      - name: mediaId
+        in: path
+        required: true
+        schema: *id001
+  /admin/categories:
+    get:
+      operationId: listAdminCategory
+      summary: 后台categories
+      description: 后台categories
+      tags:
+      - 管理
+      security:
+      - adminSession: []
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Category'
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+                required:
+                - data
+                - meta
+          headers:
+            ETag:
+              description: 强 ETag，保存下一次条件请求使用
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '401':
+          $ref: '#/components/responses/Problem401'
+        '403':
+          $ref: '#/components/responses/Problem403'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+      parameters:
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+    post:
+      operationId: createCategory
+      summary: 创建Category
+      description: 创建Category
+      tags:
+      - 管理
+      security:
+      - adminSession: []
+      responses:
+        '201':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Category'
+                required:
+                - data
+          headers:
+            ETag:
+              description: 强 ETag，保存下一次条件请求使用
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '401':
+          $ref: '#/components/responses/Problem401'
+        '403':
+          $ref: '#/components/responses/Problem403'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '409':
+          $ref: '#/components/responses/Problem409'
+        '422':
+          $ref: '#/components/responses/Problem422'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+      parameters:
+      - $ref: '#/components/parameters/CSRF'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CategoryInput'
+  /admin/categories/{taxonomyId}:
+    get:
+      operationId: getCategory
+      summary: 读取Category和ETag
+      description: 读取Category和ETag
+      tags:
+      - 管理
+      security:
+      - adminSession: []
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Category'
+                required:
+                - data
+          headers:
+            ETag:
+              description: 强 ETag，保存下一次条件请求使用
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '401':
+          $ref: '#/components/responses/Problem401'
+        '403':
+          $ref: '#/components/responses/Problem403'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+      parameters:
+      - name: taxonomyId
+        in: path
+        required: true
+        schema: *id001
+    put:
+      operationId: updateCategory
+      summary: 更新Category
+      description: ETag来自GET；重命名同步当前投影/公开搜索，历史快照不变；分类模块有引用时不可改变，最大两级。
+      tags:
+      - 管理
+      security:
+      - adminSession: []
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Category'
+                required:
+                - data
+          headers:
+            ETag:
+              description: 强 ETag，保存下一次条件请求使用
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '401':
+          $ref: '#/components/responses/Problem401'
+        '403':
+          $ref: '#/components/responses/Problem403'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '409':
+          $ref: '#/components/responses/Problem409'
+        '412':
+          $ref: '#/components/responses/Problem412'
+        '422':
+          $ref: '#/components/responses/Problem422'
+        '428':
+          $ref: '#/components/responses/Problem428'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+      parameters:
+      - name: taxonomyId
+        in: path
+        required: true
+        schema: *id001
+      - $ref: '#/components/parameters/CSRF'
+      - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CategoryInput'
+    delete:
+      operationId: deleteCategory
+      summary: 软删除未被引用的Category
+      description: 草稿/历史/发布引用或子分类存在409，保留唯一名称和slug。
+      tags:
+      - 管理
+      security:
+      - adminSession: []
+      responses:
+        '204':
+          description: 成功
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '401':
+          $ref: '#/components/responses/Problem401'
+        '403':
+          $ref: '#/components/responses/Problem403'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '409':
+          $ref: '#/components/responses/Problem409'
+        '412':
+          $ref: '#/components/responses/Problem412'
+        '422':
+          $ref: '#/components/responses/Problem422'
+        '428':
+          $ref: '#/components/responses/Problem428'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+      parameters:
+      - name: taxonomyId
+        in: path
+        required: true
+        schema: *id001
+      - $ref: '#/components/parameters/CSRF'
+      - $ref: '#/components/parameters/IfMatch'
+      - $ref: '#/components/parameters/IdempotencyKey'
+  /admin/tags:
+    get:
+      operationId: listAdminTag
+      summary: 后台tags
+      description: 后台tags
+      tags:
+      - 管理
+      security:
+      - adminSession: []
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Tag'
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+                required:
+                - data
+                - meta
+          headers:
+            ETag:
+              description: 强 ETag，保存下一次条件请求使用
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '401':
+          $ref: '#/components/responses/Problem401'
+        '403':
+          $ref: '#/components/responses/Problem403'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+      parameters:
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+    post:
+      operationId: createTag
+      summary: 创建Tag
+      description: 创建Tag
+      tags:
+      - 管理
+      security:
+      - adminSession: []
+      responses:
+        '201':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Tag'
+                required:
+                - data
+          headers:
+            ETag:
+              description: 强 ETag，保存下一次条件请求使用
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '401':
+          $ref: '#/components/responses/Problem401'
+        '403':
+          $ref: '#/components/responses/Problem403'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '409':
+          $ref: '#/components/responses/Problem409'
+        '422':
+          $ref: '#/components/responses/Problem422'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+      parameters:
+      - $ref: '#/components/parameters/CSRF'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TagInput'
+  /admin/tags/{taxonomyId}:
+    get:
+      operationId: getTag
+      summary: 读取Tag和ETag
+      description: 读取Tag和ETag
+      tags:
+      - 管理
+      security:
+      - adminSession: []
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Tag'
+                required:
+                - data
+          headers:
+            ETag:
+              description: 强 ETag，保存下一次条件请求使用
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '401':
+          $ref: '#/components/responses/Problem401'
+        '403':
+          $ref: '#/components/responses/Problem403'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+      parameters:
+      - name: taxonomyId
+        in: path
+        required: true
+        schema: *id001
+    put:
+      operationId: updateTag
+      summary: 更新Tag
+      description: ETag来自GET；重命名同步当前投影/公开搜索，历史快照不变；分类模块有引用时不可改变，最大两级。
+      tags:
+      - 管理
+      security:
+      - adminSession: []
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Tag'
+                required:
+                - data
+          headers:
+            ETag:
+              description: 强 ETag，保存下一次条件请求使用
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '401':
+          $ref: '#/components/responses/Problem401'
+        '403':
+          $ref: '#/components/responses/Problem403'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '409':
+          $ref: '#/components/responses/Problem409'
+        '412':
+          $ref: '#/components/responses/Problem412'
+        '422':
+          $ref: '#/components/responses/Problem422'
+        '428':
+          $ref: '#/components/responses/Problem428'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+      parameters:
+      - name: taxonomyId
+        in: path
+        required: true
+        schema: *id001
+      - $ref: '#/components/parameters/CSRF'
+      - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TagInput'
+    delete:
+      operationId: deleteTag
+      summary: 软删除未被引用的Tag
+      description: 草稿/历史/发布引用或子分类存在409，保留唯一名称和slug。
+      tags:
+      - 管理
+      security:
+      - adminSession: []
+      responses:
+        '204':
+          description: 成功
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '401':
+          $ref: '#/components/responses/Problem401'
+        '403':
+          $ref: '#/components/responses/Problem403'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '409':
+          $ref: '#/components/responses/Problem409'
+        '412':
+          $ref: '#/components/responses/Problem412'
+        '422':
+          $ref: '#/components/responses/Problem422'
+        '428':
+          $ref: '#/components/responses/Problem428'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+      parameters:
+      - name: taxonomyId
+        in: path
+        required: true
+        schema: *id001
+      - $ref: '#/components/parameters/CSRF'
+      - $ref: '#/components/parameters/IfMatch'
+      - $ref: '#/components/parameters/IdempotencyKey'
+  /admin/jobs/{jobId}:
+    get:
+      operationId: getJob
+      summary: 异步任务进度
+      description: 异步任务进度
+      tags:
+      - 管理
+      security:
+      - adminSession: []
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Job'
+                required:
+                - data
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '401':
+          $ref: '#/components/responses/Problem401'
+        '403':
+          $ref: '#/components/responses/Problem403'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+      parameters:
+      - name: jobId
+        in: path
+        required: true
+        schema: *id001
+  /admin/exports:
+    post:
+      operationId: createExport
+      summary: 创建完整内容导出任务
+      description: 创建完整内容导出任务
+      tags:
+      - 管理
+      security:
+      - adminSession: []
+      responses:
+        '202':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Job'
+                required:
+                - data
+          headers:
+            Location:
+              description: /api/v1/admin/jobs/{jobId}
+              schema:
+                type: string
+            Retry-After:
+              schema:
+                type: integer
+                minimum: 1
+              description: 建议轮询间隔秒
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '401':
+          $ref: '#/components/responses/Problem401'
+        '403':
+          $ref: '#/components/responses/Problem403'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '409':
+          $ref: '#/components/responses/Problem409'
+        '422':
+          $ref: '#/components/responses/Problem422'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+      parameters:
+      - $ref: '#/components/parameters/CSRF'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/Reauth'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                includeMedia: *id006
+              required:
+              - includeMedia
+  /admin/exports/{exportId}/download:
+    get:
+      operationId: downloadExport
+      summary: 受保护导出下载
+      description: exportId为成功EXPORT任务的resultResourceId；未就绪409、过期404；不包含密码/TOTP/会话密钥。
+      tags:
+      - 管理
+      security:
+      - adminSession: []
+      responses:
+        '200':
+          description: 导出ZIP文件
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '401':
+          $ref: '#/components/responses/Problem401'
+        '403':
+          $ref: '#/components/responses/Problem403'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+        '409':
+          $ref: '#/components/responses/Problem409'
+      parameters:
+      - name: exportId
+        in: path
+        required: true
+        schema: *id001
+  /admin/backups:
+    get:
+      operationId: listBackups
+      summary: 备份三项独立状态
+      description: 备份三项独立状态
+      tags:
+      - 管理
+      security:
+      - adminSession: []
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Backup'
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+                required:
+                - data
+                - meta
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '401':
+          $ref: '#/components/responses/Problem401'
+        '403':
+          $ref: '#/components/responses/Problem403'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+      parameters:
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+    post:
+      operationId: createBackup
+      summary: 创建手动备份任务
+      description: 创建手动备份任务
+      tags:
+      - 管理
+      security:
+      - adminSession: []
+      responses:
+        '202':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Job'
+                required:
+                - data
+          headers:
+            Location:
+              description: /api/v1/admin/jobs/{jobId}
+              schema:
+                type: string
+            Retry-After:
+              schema:
+                type: integer
+                minimum: 1
+              description: 建议轮询间隔秒
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '401':
+          $ref: '#/components/responses/Problem401'
+        '403':
+          $ref: '#/components/responses/Problem403'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '409':
+          $ref: '#/components/responses/Problem409'
+        '422':
+          $ref: '#/components/responses/Problem422'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+      parameters:
+      - $ref: '#/components/parameters/CSRF'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/Reauth'
+  /admin/backups/{backupId}:
+    get:
+      operationId: getBackup
+      summary: 备份详情
+      description: 备份详情
+      tags:
+      - 管理
+      security:
+      - adminSession: []
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Backup'
+                required:
+                - data
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '401':
+          $ref: '#/components/responses/Problem401'
+        '403':
+          $ref: '#/components/responses/Problem403'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+      parameters:
+      - name: backupId
+        in: path
+        required: true
+        schema: *id001
+  /admin/restore-drills:
+    get:
+      operationId: listRestoreDrills
+      summary: 完整恢复演练记录
+      description: 只读，独立恢复流程写入；不提供在线覆盖数据库或执行恢复的API。
+      tags:
+      - 管理
+      security:
+      - adminSession: []
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RestoreDrill'
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+                required:
+                - data
+                - meta
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '401':
+          $ref: '#/components/responses/Problem401'
+        '403':
+          $ref: '#/components/responses/Problem403'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+      parameters:
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+  /admin/audit-logs:
+    get:
+      operationId: listAuditLogs
+      summary: 安全审计摘要
+      description: 安全审计摘要
+      tags:
+      - 管理
+      security:
+      - adminSession: []
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Audit'
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+                required:
+                - data
+                - meta
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '401':
+          $ref: '#/components/responses/Problem401'
+        '403':
+          $ref: '#/components/responses/Problem403'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+      parameters:
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+  /admin/settings:
+    get:
+      operationId: getSettings
+      summary: 非敏感站点设置及ETag
+      description: 非敏感站点设置及ETag
+      tags:
+      - 管理
+      security:
+      - adminSession: []
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Settings'
+                required:
+                - data
+          headers:
+            ETag:
+              description: 强 ETag，保存下一次条件请求使用
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '401':
+          $ref: '#/components/responses/Problem401'
+        '403':
+          $ref: '#/components/responses/Problem403'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+    put:
+      operationId: updateSettings
+      summary: 更新白名单站点文案
+      description: 仅siteTitle/siteIntro，上传安全限额由实现配置决定，API只读显示。
+      tags:
+      - 管理
+      security:
+      - adminSession: []
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Settings'
+                required:
+                - data
+          headers:
+            ETag:
+              description: 强 ETag，保存下一次条件请求使用
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '401':
+          $ref: '#/components/responses/Problem401'
+        '403':
+          $ref: '#/components/responses/Problem403'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '409':
+          $ref: '#/components/responses/Problem409'
+        '412':
+          $ref: '#/components/responses/Problem412'
+        '422':
+          $ref: '#/components/responses/Problem422'
+        '428':
+          $ref: '#/components/responses/Problem428'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+      parameters:
+      - $ref: '#/components/parameters/CSRF'
+      - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SettingsInput'
+  /admin/security:
+    get:
+      operationId: getSecurityStatus
+      summary: 安全状态
+      description: 只读；密码/MFA/恢复码/重新认证通过同一Auth.js集成，提供方端点不在业务REST契约内，见IV-01。
+      tags:
+      - 管理
+      security:
+      - adminSession: []
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/SecurityStatus'
+                required:
+                - data
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '401':
+          $ref: '#/components/responses/Problem401'
+        '403':
+          $ref: '#/components/responses/Problem403'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '429':
+          $ref: '#/components/responses/Problem429'
+        '500':
+          $ref: '#/components/responses/Problem500'
+components:
+  securitySchemes:
+    adminSession:
+      type: apiKey
+      in: cookie
+      name: authjs.session-token
+      description: Auth.js会话的逻辑名称；生产secure前缀、adapter、MFA和CSRF集成由IV-01锁定，不是独立认证实现。
+  parameters:
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 1
+      description: 强 ETag；禁止 * 和弱 ETag。草稿动作使用 draft ETag，状态动作用 state ETag。
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 16
+        maxLength: 200
+      description: 同键同参重放；同键异参 409。保留24h为交付参数。
+    CSRF:
+      name: X-CSRF-Token
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 1
+      description: 由同一 Auth.js 会话体系签发/验证的 CSRF 证明。
+    Reauth:
+      name: X-Reauth-Token
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 1
+      description: Auth.js 统一体系敏感操作短时重新认证证明；具体载体 IV-01 验证。
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      schema:
+        type: string
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+  responses:
+    Problem400:
+      description: 输入格式错误
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Problem401:
+      description: 会话无效或MFA未完成
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Problem403:
+      description: 无权限、CSRF失败或需要重新认证
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Problem404:
+      description: 不存在或不可公开
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Problem409:
+      description: 业务冲突或重复键异参
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Problem412:
+      description: 条件版本已过期
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Problem413:
+      description: 上传超限
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Problem415:
+      description: 不支持的媒体
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Problem422:
+      description: 结构正确但业务校验失败
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Problem428:
+      description: 缺少条件版本
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Problem429:
+      description: 速率限制
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+            minimum: 1
+          description: 等待秒数
+    Problem500:
+      description: 服务端错误
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+  schemas:
+    Problem:
+      type: object
+      additionalProperties: false
+      properties:
+        type:
+          type: string
+          format: uri-reference
+        title:
+          type: string
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        detail:
+          type: string
+        instance:
+          type: string
+        code:
+          type: string
+          enum:
+          - INVALID_INPUT
+          - UNAUTHENTICATED
+          - FORBIDDEN
+          - NOT_FOUND
+          - PATH_CONFLICT
+          - RESOURCE_REFERENCED
+          - DRAFT_CONFLICT
+          - STATE_CONFLICT
+          - PRECONDITION_REQUIRED
+          - IDEMPOTENCY_MISMATCH
+          - OPERATION_IN_PROGRESS
+          - MEDIA_NOT_READY
+          - REAUTH_REQUIRED
+          - PAYLOAD_TOO_LARGE
+          - UNSUPPORTED_MEDIA_TYPE
+          - RATE_LIMITED
+          - INTERNAL_ERROR
+        requestId:
+          type: string
+        errors:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            properties:
+              pointer:
+                type: string
+              message:
+                type: string
+            required:
+            - pointer
+            - message
+      required:
+      - type
+      - title
+      - status
+      - code
+      - requestId
+    Placement:
+      type: object
+      additionalProperties: false
+      properties:
+        placementId: *id001
+        mediaId: *id001
+        role:
+          type: string
+          enum:
+          - COVER
+          - INLINE
+          - ALBUM_PHOTO
+        caption:
+          type: string
+          maxLength: 2000
+        altText:
+          type: string
+          maxLength: 1000
+      required:
+      - placementId
+      - mediaId
+      - role
+      - caption
+      - altText
+    PayloadInput:
+      type: object
+      additionalProperties: false
+      properties:
+        schemaVersion: &id008
+          type: integer
+          const: 1
+        type: &id009
+          type: string
+          enum:
+          - MOMENT
+          - ARTICLE
+          - ALBUM
+        module: &id010
+          type: string
+          enum:
+          - LIFE
+          - KNOWLEDGE
+        title: &id011
+          type: string
+          maxLength: 240
+        summary: &id012
+          type: string
+          maxLength: 4000
+        bodyMarkdown: &id013
+          type: string
+        desiredVisibility: &id014
+          type: string
+          enum:
+          - PUBLIC
+          - PRIVATE
+        desiredPath: &id015
+          type: string
+          pattern: ^/(life|knowledge)/[a-z0-9]+(?:-[a-z0-9]+)*(?:/[a-z0-9]+(?:-[a-z0-9]+)*)*$
+          maxLength: 500
+        categoryId: &id016
+          anyOf:
+          - *id001
+          - type: 'null'
+        tagIds: &id017
+          type: array
+          items: *id001
+          uniqueItems: true
+        coverMediaId: &id018
+          anyOf:
+          - *id001
+          - type: 'null'
+        placements: &id019
+          type: array
+          items:
+            $ref: '#/components/schemas/Placement'
+      required:
+      - schemaVersion
+      - type
+      - module
+      - title
+      - summary
+      - bodyMarkdown
+      - desiredVisibility
+      - desiredPath
+      - categoryId
+      - tagIds
+      - coverMediaId
+      - placements
+      allOf: &id020
+      - if:
+          properties:
+            type:
+              enum:
+              - MOMENT
+              - ALBUM
+          required:
+          - type
+        then:
+          properties:
+            module:
+              const: LIFE
+    TaxonomySnapshot:
+      type: object
+      additionalProperties: false
+      properties:
+        category:
+          anyOf:
+          - &id007
+            type: object
+            additionalProperties: false
+            properties:
+              id: *id001
+              name:
+                type: string
+                maxLength: 100
+              slug:
+                type: string
+                maxLength: 120
+            required:
+            - id
+            - name
+            - slug
+          - type: 'null'
+        tags:
+          type: array
+          items: *id007
+      required:
+      - category
+      - tags
+    Payload:
+      type: object
+      additionalProperties: false
+      properties:
+        schemaVersion: *id008
+        type: *id009
+        module: *id010
+        title: *id011
+        summary: *id012
+        bodyMarkdown: *id013
+        desiredVisibility: *id014
+        desiredPath: *id015
+        categoryId: *id016
+        tagIds: *id017
+        coverMediaId: *id018
+        placements: *id019
+        taxonomySnapshot:
+          $ref: '#/components/schemas/TaxonomySnapshot'
+      required:
+      - schemaVersion
+      - type
+      - module
+      - title
+      - summary
+      - bodyMarkdown
+      - desiredVisibility
+      - desiredPath
+      - categoryId
+      - tagIds
+      - coverMediaId
+      - placements
+      - taxonomySnapshot
+      allOf: *id020
+    ContentState:
+      type: object
+      additionalProperties: false
+      properties:
+        id: *id001
+        type:
+          type: string
+          enum:
+          - MOMENT
+          - ARTICLE
+          - ALBUM
+        module:
+          type: string
+          enum:
+          - LIFE
+          - KNOWLEDGE
+        publicationState:
+          type: string
+          enum:
+          - NEVER_PUBLISHED
+          - PUBLISHED
+          - UNPUBLISHED
+        effectiveVisibility:
+          type: string
+          enum:
+          - PUBLIC
+          - PRIVATE
+        publishedRevisionId:
+          anyOf:
+          - *id001
+          - type: 'null'
+        stateVersion: &id022
+          type: integer
+          minimum: 1
+        stateEtag:
+          type: string
+        firstPublishedAt:
+          anyOf:
+          - &id021
+            type: string
+            format: date-time
+          - type: 'null'
+        lastPublishedAt:
+          anyOf:
+          - *id021
+          - type: 'null'
+        deletedAt:
+          anyOf:
+          - *id021
+          - type: 'null'
+        updatedAt: *id021
+      required:
+      - id
+      - type
+      - module
+      - publicationState
+      - effectiveVisibility
+      - publishedRevisionId
+      - stateVersion
+      - stateEtag
+      - firstPublishedAt
+      - lastPublishedAt
+      - deletedAt
+      - updatedAt
+    Draft:
+      type: object
+      additionalProperties: false
+      properties:
+        contentId: *id001
+        revisionNumber: *id022
+        basedOnRevisionId:
+          anyOf:
+          - *id001
+          - type: 'null'
+        payload:
+          $ref: '#/components/schemas/Payload'
+        lastSavedAt: *id021
+        etag:
+          type: string
+      required:
+      - contentId
+      - revisionNumber
+      - basedOnRevisionId
+      - payload
+      - lastSavedAt
+      - etag
+    Revision:
+      type: object
+      additionalProperties: false
+      properties:
+        id: *id001
+        contentId: *id001
+        versionNumber: *id022
+        publishedEditionNumber:
+          anyOf:
+          - *id022
+          - type: 'null'
+        revisionKind:
+          type: string
+          enum:
+          - PUBLISHED
+          - MANUAL_SNAPSHOT
+        restoredFromRevisionId:
+          anyOf:
+          - *id001
+          - type: 'null'
+        payload:
+          $ref: '#/components/schemas/Payload'
+        createdAt: *id021
+      required:
+      - id
+      - contentId
+      - versionNumber
+      - publishedEditionNumber
+      - revisionKind
+      - restoredFromRevisionId
+      - payload
+      - createdAt
+    ContentAdmin:
+      type: object
+      additionalProperties: false
+      properties:
+        state:
+          $ref: '#/components/schemas/ContentState'
+        draft:
+          $ref: '#/components/schemas/Draft'
+      required:
+      - state
+      - draft
+    PublishedContent:
+      type: object
+      additionalProperties: false
+      properties:
+        id: *id001
+        revisionId: *id001
+        publishedEditionNumber: *id022
+        publishedAt: *id021
+        canonicalPath:
+          type: string
+        payload:
+          $ref: '#/components/schemas/Payload'
+      required:
+      - id
+      - revisionId
+      - publishedEditionNumber
+      - publishedAt
+      - canonicalPath
+      - payload
+    ContentSummary:
+      type: object
+      additionalProperties: false
+      properties:
+        id: *id001
+        type:
+          type: string
+          enum:
+          - MOMENT
+          - ARTICLE
+          - ALBUM
+        module:
+          type: string
+          enum:
+          - LIFE
+          - KNOWLEDGE
+        title:
+          type: string
+          maxLength: 240
+        summary:
+          type: string
+        canonicalPath:
+          type: string
+        publishedAt: *id021
+        cover:
+          anyOf:
+          - type: object
+            additionalProperties: false
+            properties:
+              contentId: *id001
+              placementId: *id001
+              altText:
+                type: string
+            required:
+            - contentId
+            - placementId
+            - altText
+          - type: 'null'
+      required:
+      - id
+      - type
+      - module
+      - title
+      - summary
+      - canonicalPath
+      - publishedAt
+      - cover
+    AdminSummary:
+      type: object
+      additionalProperties: false
+      properties:
+        state:
+          $ref: '#/components/schemas/ContentState'
+        draftTitle:
+          type: string
+          maxLength: 240
+        draftRevisionNumber: *id022
+      required:
+      - state
+      - draftTitle
+      - draftRevisionNumber
+    PublishInput:
+      type: object
+      additionalProperties: false
+      properties:
+        expectedStateEtag:
+          type: string
+      required:
+      - expectedStateEtag
+    PublishResult:
+      type: object
+      additionalProperties: false
+      properties:
+        content:
+          $ref: '#/components/schemas/ContentAdmin'
+        revision:
+          $ref: '#/components/schemas/Revision'
+        firstPublication: *id006
+      required:
+      - content
+      - revision
+      - firstPublication
+    CategoryInput:
+      type: object
+      additionalProperties: false
+      properties:
+        module: &id023
+          type: string
+          enum:
+          - LIFE
+          - KNOWLEDGE
+        parentId: &id024
+          anyOf:
+          - *id001
+          - type: 'null'
+        name: &id025
+          type: string
+          minLength: 1
+          maxLength: 100
+        slug: &id026
+          type: string
+          pattern: ^[a-z0-9]+(?:-[a-z0-9]+)*$
+          maxLength: 120
+        sortOrder: &id027
+          type: integer
+          minimum: 0
+      required:
+      - module
+      - parentId
+      - name
+      - slug
+      - sortOrder
+    Category:
+      type: object
+      additionalProperties: false
+      properties:
+        module: *id023
+        parentId: *id024
+        name: *id025
+        slug: *id026
+        sortOrder: *id027
+        id: *id001
+        isSystem: *id006
+        updatedAt: *id021
+      required:
+      - module
+      - parentId
+      - name
+      - slug
+      - sortOrder
+      - id
+      - isSystem
+      - updatedAt
+    TagInput:
+      type: object
+      additionalProperties: false
+      properties:
+        name: &id028
+          type: string
+          minLength: 1
+          maxLength: 100
+        slug: &id029
+          type: string
+          pattern: ^[a-z0-9]+(?:-[a-z0-9]+)*$
+          maxLength: 120
+      required:
+      - name
+      - slug
+    Tag:
+      type: object
+      additionalProperties: false
+      properties:
+        name: *id028
+        slug: *id029
+        id: *id001
+        updatedAt: *id021
+      required:
+      - name
+      - slug
+      - id
+      - updatedAt
+    Media:
+      type: object
+      additionalProperties: false
+      properties:
+        id: *id001
+        originalFilename:
+          type: string
+        mimeType:
+          type: string
+        sizeBytes:
+          type: integer
+          minimum: 1
+        width:
+          anyOf:
+          - *id022
+          - type: 'null'
+        height:
+          anyOf:
+          - *id022
+          - type: 'null'
+        capturedAt:
+          anyOf:
+          - *id021
+          - type: 'null'
+        captureTimeTrusted: *id006
+        uploadedAt: *id021
+        processingStatus:
+          type: string
+          enum:
+          - UPLOADING
+          - PROCESSING
+          - READY
+          - FAILED
+      required:
+      - id
+      - originalFilename
+      - mimeType
+      - sizeBytes
+      - width
+      - height
+      - capturedAt
+      - captureTimeTrusted
+      - uploadedAt
+      - processingStatus
+    Job:
+      type: object
+      additionalProperties: false
+      properties:
+        id: *id001
+        jobType:
+          type: string
+          enum:
+          - EXPORT
+          - BACKUP
+          - MEDIA_PROCESS
+        status:
+          type: string
+          enum:
+          - PENDING
+          - RUNNING
+          - VERIFYING
+          - SUCCEEDED
+          - FAILED
+        attempts:
+          type: integer
+          minimum: 0
+        errorCode:
+          anyOf:
+          - type: string
+          - type: 'null'
+        resultResourceId:
+          anyOf:
+          - *id001
+          - type: 'null'
+        createdAt: *id021
+        completedAt:
+          anyOf:
+          - *id021
+          - type: 'null'
+      required:
+      - id
+      - jobType
+      - status
+      - attempts
+      - errorCode
+      - resultResourceId
+      - createdAt
+      - completedAt
+    UploadAccepted:
+      type: object
+      additionalProperties: false
+      properties:
+        media:
+          $ref: '#/components/schemas/Media'
+        job:
+          $ref: '#/components/schemas/Job'
+      required:
+      - media
+      - job
+    Backup:
+      type: object
+      additionalProperties: false
+      properties:
+        id: *id001
+        jobId: *id001
+        backupType:
+          type: string
+          enum:
+          - DAILY
+          - WEEKLY
+          - MONTHLY
+          - YEARLY
+          - MANUAL
+        status:
+          type: string
+          enum:
+          - PENDING
+          - RUNNING
+          - VERIFYING
+          - SUCCEEDED
+          - FAILED
+        localStatus:
+          type: string
+          enum:
+          - PENDING
+          - RUNNING
+          - SUCCEEDED
+          - FAILED
+        integrityStatus:
+          type: string
+          enum:
+          - PENDING
+          - RUNNING
+          - SUCCEEDED
+          - FAILED
+        offsiteStatus:
+          type: string
+          enum:
+          - PENDING
+          - RUNNING
+          - SUCCEEDED
+          - FAILED
+        verifiedAt:
+          anyOf:
+          - *id021
+          - type: 'null'
+        startedAt:
+          anyOf:
+          - *id021
+          - type: 'null'
+        completedAt:
+          anyOf:
+          - *id021
+          - type: 'null'
+      required:
+      - id
+      - jobId
+      - backupType
+      - status
+      - localStatus
+      - integrityStatus
+      - offsiteStatus
+      - verifiedAt
+      - startedAt
+      - completedAt
+    RestoreDrill:
+      type: object
+      additionalProperties: false
+      properties:
+        id: *id001
+        backupRunId: *id001
+        status:
+          type: string
+          enum:
+          - RUNNING
+          - PASSED
+          - FAILED
+        startedAt: *id021
+        completedAt:
+          anyOf:
+          - *id021
+          - type: 'null'
+        notes:
+          type: string
+      required:
+      - id
+      - backupRunId
+      - status
+      - startedAt
+      - completedAt
+      - notes
+    Audit:
+      type: object
+      additionalProperties: false
+      properties:
+        id: *id001
+        action:
+          type: string
+        targetType:
+          type: string
+        targetId:
+          anyOf:
+          - *id001
+          - type: 'null'
+        requestId:
+          anyOf:
+          - type: string
+          - type: 'null'
+        createdAt: *id021
+      required:
+      - id
+      - action
+      - targetType
+      - targetId
+      - requestId
+      - createdAt
+    SecurityStatus:
+      type: object
+      additionalProperties: false
+      properties:
+        mfaEnabled: *id006
+        unusedRecoveryCodeCount:
+          type: integer
+          minimum: 0
+        sessionVersion: *id022
+      required:
+      - mfaEnabled
+      - unusedRecoveryCodeCount
+      - sessionVersion
+    Settings:
+      type: object
+      additionalProperties: false
+      properties:
+        siteTitle:
+          type: string
+          minLength: 1
+          maxLength: 100
+        siteIntro:
+          type: string
+          maxLength: 500
+        uploadMaxBytes:
+          anyOf:
+          - type: integer
+            minimum: 1
+          - type: 'null'
+        allowedMimeTypes:
+          type: array
+          items:
+            type: string
+      required:
+      - siteTitle
+      - siteIntro
+      - uploadMaxBytes
+      - allowedMimeTypes
+    SettingsInput:
+      type: object
+      additionalProperties: false
+      properties:
+        siteTitle:
+          type: string
+          minLength: 1
+          maxLength: 100
+        siteIntro:
+          type: string
+          maxLength: 500
+      required:
+      - siteTitle
+      - siteIntro
+    RouteResult:
+      type: object
+      additionalProperties: false
+      properties:
+        contentId: *id001
+        canonicalPath:
+          type: string
+      required:
+      - contentId
+      - canonicalPath
+    MediaAuthorization:
+      type: object
+      additionalProperties: false
+      properties:
+        contentId: *id001
+        placementId: *id001
+      required:
+      - contentId
+      - placementId
+    Meta:
+      type: object
+      additionalProperties: false
+      properties:
+        nextCursor:
+          anyOf:
+          - type: string
+          - type: 'null'
+        hasMore: *id006
+      required:
+      - nextCursor
+      - hasMore

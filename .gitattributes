@@ -1,0 +1,7 @@
+* text=auto eol=lf
+*.png -text
+*.jpg -text
+*.zip -text
+
+# Frozen delivery hashes refer to exact original bytes on every platform.
+docs/design-delivery/** -text
