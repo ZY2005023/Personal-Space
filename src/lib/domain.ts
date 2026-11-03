@@ -45,7 +45,7 @@ export type State = {
 };
 export type Draft = { contentId: string; revisionNumber: number; basedOnRevisionId: string | null; payload: Payload; lastSavedAt: string };
 export type Revision = { id: string; contentId: string; versionNumber: number; publishedEditionNumber: number | null; revisionKind: "PUBLISHED" | "MANUAL_SNAPSHOT"; restoredFromRevisionId: string | null; payload: Payload; createdAt: string };
-export type Aggregate = { state: State; draft: Draft; revisions: Revision[]; canonicalPath: string | null; aliases: string[] };
+export type Aggregate = { state: State; draft: Draft; revisions: Revision[]; canonicalPath: string | null; aliases: string[]; revisionsComplete?: boolean; revisionHead?: { versionNumber: number; publishedEditionNumber: number } };
 export const draftEtag = (d: Draft) => `"d-${d.contentId}-${d.revisionNumber}"`;
 export const stateEtag = (s: State) => `"s-${s.id}-${s.stateVersion}"`;
 export function requireMatch(actual: string, expected: string | null, code = "DRAFT_CONFLICT") {
@@ -68,8 +68,14 @@ export function saveDraft(a: Aggregate, payload: Payload, expected: string | nul
   return { ...a, draft: { ...a.draft, payload: structuredClone(payload), revisionNumber: a.draft.revisionNumber + 1, lastSavedAt: now } };
 }
 function revision(a: Aggregate, kind: Revision["revisionKind"], now: string): Revision {
-  return { id: randomUUID(), contentId: a.state.id, versionNumber: Math.max(0, ...a.revisions.map(r => r.versionNumber)) + 1,
-    publishedEditionNumber: kind === "PUBLISHED" ? Math.max(0, ...a.revisions.map(r => r.publishedEditionNumber || 0)) + 1 : null,
+  // Sparse write contexts must load independent persisted counters before creating a version.
+  if (a.revisionsComplete === false && !a.revisionHead) throw new DomainError(500, "INTERNAL_ERROR", "创建版本前需重新加载历史编号");
+  let version = a.revisionHead?.versionNumber ?? 0, edition = a.revisionHead?.publishedEditionNumber ?? 0;
+  for (const r of a.revisions) { version = Math.max(version, r.versionNumber); edition = Math.max(edition, r.publishedEditionNumber || 0); }
+  if (![version, edition].every(n => Number.isSafeInteger(n) && n >= 0)) throw new DomainError(500, "INTERNAL_ERROR", "历史编号记录无效");
+  if (version >= 2147483647 || kind === "PUBLISHED" && edition >= 2147483647) throw new DomainError(409, "INVALID_INPUT", "历史编号已达上限，需要维护后再创建版本");
+  return { id: randomUUID(), contentId: a.state.id, versionNumber: version + 1,
+    publishedEditionNumber: kind === "PUBLISHED" ? edition + 1 : null,
     revisionKind: kind, restoredFromRevisionId: a.draft.basedOnRevisionId !== a.state.publishedRevisionId ? a.draft.basedOnRevisionId : null, payload: structuredClone(a.draft.payload), createdAt: now };
 }
 export function publish(a: Aggregate, draftMatch: string | null, stateMatch: string | null, now = new Date().toISOString()): Aggregate {

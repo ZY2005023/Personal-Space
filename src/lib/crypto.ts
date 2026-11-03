@@ -1,14 +1,9 @@
-import { createDecipheriv, createHmac, timingSafeEqual } from "node:crypto";
+import { createCipheriv, createDecipheriv, randomBytes, timingSafeEqual } from "node:crypto";
+import { generateSync } from "otplib";
 export function equal(a: string, b: string) { const x = Buffer.from(a), y = Buffer.from(b); return x.length === y.length && timingSafeEqual(x, y); }
-function base32(value: string) {
-  let bits = "";
-  for (const c of value.toUpperCase().replace(/=+$/, "")) { const n = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567".indexOf(c); if (n < 0) throw new Error("Invalid base32"); bits += n.toString(2).padStart(5, "0"); }
-  return Buffer.from((bits.match(/.{8}/g) || []).map(x => parseInt(x, 2)));
-}
 export function totp(secret: string, step: number) {
-  const counter = Buffer.alloc(8); counter.writeBigUInt64BE(BigInt(step));
-  const bytes = createHmac("sha1", base32(secret)).update(counter).digest(); const offset = bytes[19] & 15;
-  return ((bytes.readUInt32BE(offset) & 0x7fffffff) % 1_000_000).toString().padStart(6, "0");
+  if (!Number.isSafeInteger(step) || step < 0) throw new Error("Invalid TOTP step");
+  return generateSync({ secret, strategy: "totp", epoch: step * 30, algorithm: "sha1", digits: 6, period: 30 });
 }
 export function matchTotp(secret: string, code: string, now = Date.now()) {
   if (!/^\d{6}$/.test(code)) return null;
@@ -16,8 +11,22 @@ export function matchTotp(secret: string, code: string, now = Date.now()) {
   for (const candidate of [step, step - 1, step + 1]) if (candidate >= 0 && equal(totp(secret, candidate), code)) return candidate;
   return null;
 }
-export function decryptTotp(value: string) {
-  const key = Buffer.from(process.env.TOTP_ENCRYPTION_KEY || "", "base64"); if (key.length !== 32) throw new Error("TOTP encryption key is not configured");
-  const [iv, tag, ciphertext] = value.split(".").map(x => Buffer.from(x, "base64url"));
-  const cipher = createDecipheriv("aes-256-gcm", key, iv); cipher.setAuthTag(tag); return Buffer.concat([cipher.update(ciphertext), cipher.final()]).toString("utf8");
+function encryptionKey() {
+  const value = process.env.TOTP_ENCRYPTION_KEY || "", key = Buffer.from(value, "base64");
+  if (key.length !== 32 || key.toString("base64") !== value) throw new Error("TOTP encryption key is not configured"); return key;
 }
+export function encryptSecret(value: string, purpose: "totp" | "mfa-enrollment") {
+  const iv = randomBytes(12), cipher = createCipheriv("aes-256-gcm", encryptionKey(), iv);
+  cipher.setAAD(Buffer.from("personal-space:v1:" + purpose));
+  const encrypted = Buffer.concat([cipher.update(value, "utf8"), cipher.final()]);
+  return ["v1", iv.toString("base64url"), cipher.getAuthTag().toString("base64url"), encrypted.toString("base64url")].join(".");
+}
+export function decryptSecret(value: string, purpose: "totp" | "mfa-enrollment") {
+  const parts = value.split("."); if (parts.length !== 4 || parts[0] !== "v1" || parts.slice(1).some(p => !/^[A-Za-z0-9_-]+$/.test(p))) throw new Error("Invalid encrypted secret");
+  const [iv, tag, ciphertext] = parts.slice(1).map(x => Buffer.from(x, "base64url"));
+  if (iv.length !== 12 || tag.length !== 16) throw new Error("Invalid encrypted secret");
+  const cipher = createDecipheriv("aes-256-gcm", encryptionKey(), iv); cipher.setAAD(Buffer.from("personal-space:v1:" + purpose)); cipher.setAuthTag(tag);
+  return Buffer.concat([cipher.update(ciphertext), cipher.final()]).toString("utf8");
+}
+export const encryptTotp = (value: string) => encryptSecret(value, "totp");
+export const decryptTotp = (value: string) => decryptSecret(value, "totp");

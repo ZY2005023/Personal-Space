@@ -1,6 +1,6 @@
 import { DomainError, viewPublic } from "./domain";
 import { previewEnabled, previewItems } from "./preview";
-import { normalizedFilters, publishedById, publishedByPath, publishedPage, publicTaxonomy as readTaxonomy, type PublicFilters } from "./public-store";
+import { normalizedFilters, publishedById, publishedByPath, publishedPage, publicTaxonomy as readTaxonomy, publicTaxonomyQuery, type TaxonomyPageInput, type PublicFilters } from "./public-store";
 import { paginate } from "./pagination";
 import { searchFields } from "./references";
 export type { PublicContent } from "./public-store";
@@ -23,9 +23,10 @@ export async function publicById(id: string) {
   else if (process.env.DATABASE_URL) return publishedById(id);
   throw new DomainError(404, "NOT_FOUND", "内容不存在");
 }
-export async function publicTaxonomy(kind: "categories" | "tags") {
-  if (!process.env.DATABASE_URL || previewEnabled()) return [];
-  return readTaxonomy(kind);
+export async function publicTaxonomy(kind: "categories" | "tags", input: TaxonomyPageInput = {}) {
+  publicTaxonomyQuery(kind, input);
+  if (!process.env.DATABASE_URL || previewEnabled()) return { data: [], meta: { nextCursor: null, hasMore: false } };
+  return readTaxonomy(kind, input);
 }
 export async function publicByPath(path: string) {
   if (previewEnabled()) {

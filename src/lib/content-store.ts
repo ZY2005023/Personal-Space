@@ -4,8 +4,7 @@ import { Aggregate, State, Revision, DomainError, viewAdmin, requestHash, isPubl
 import { hydrateReferences, lockReferences, lockRows } from "./reference-store";
 import { mediaRows, searchFields } from "./references";
 type Tx = Prisma.TransactionClient;
-const include = { draft: true, revisions: true, routes: true } as const;
-type Row = Prisma.ContentGetPayload<{ include: typeof include }>;
+type Row = Prisma.ContentGetPayload<{ include: { draft: true } }> & { revisions: Prisma.ContentRevisionGetPayload<Record<string, never>>[]; routes: { path: string; routeKind: string }[] };
 export function aggregate(row: Row): Aggregate {
   if (!row.draft) throw new DomainError(500, "INTERNAL_ERROR", "工作草稿暂不可用");
   return { state: { id: row.id, type: row.type as State["type"], module: row.module as State["module"], publicationState: row.publicationState as State["publicationState"], effectiveVisibility: row.effectiveVisibility as State["effectiveVisibility"], stateVersion: row.stateVersion, publishedRevisionId: row.publishedRevisionId, firstPublishedAt: row.firstPublishedAt?.toISOString() || null, lastPublishedAt: row.lastPublishedAt?.toISOString() || null, deletedAt: row.deletedAt?.toISOString() || null, updatedAt: row.updatedAt.toISOString() },
@@ -13,17 +12,33 @@ export function aggregate(row: Row): Aggregate {
     revisions: row.revisions.map(r => ({ id: r.id, contentId: r.contentId, versionNumber: r.versionNumber, publishedEditionNumber: r.publishedEditionNumber, revisionKind: r.revisionKind as Revision["revisionKind"], restoredFromRevisionId: r.restoredFromRevisionId, payload: parseStoredPayload(r.snapshot), createdAt: r.createdAt.toISOString() })),
     canonicalPath: row.routes.find(r => r.routeKind === "CANONICAL")?.path || null, aliases: row.routes.filter(r => r.routeKind === "ALIAS").map(r => r.path) };
 }
-export async function getContent(id: string, tx: Tx = db()) {
-  const row = await tx.content.findUnique({ where: { id }, include });
-  if (!row) throw new DomainError(404, "NOT_FOUND", "内容不存在"); return aggregate(row);
+/** Internal write context only. Caller must already hold this content and draft row locks. */
+export async function loadWriteContext(tx: Tx, id: string, adminId: string, intent: MutationIntent, revisionId?: string): Promise<Aggregate> {
+  const row = await tx.content.findFirst({ where: { id, ownerId: adminId }, include: { draft: true } });
+  if (!row || row.ownerId !== adminId) throw new DomainError(404, "NOT_FOUND", "内容不存在");
+  const revisions: Row["revisions"] = [], routes: Row["routes"] = [];
+  let revisionHead: Aggregate["revisionHead"];
+  if (intent === "restore-revision") {
+    if (!revisionId) throw new DomainError(400, "INVALID_INPUT", "缺少历史版本标识");
+    const revision = await tx.contentRevision.findFirst({ where: { id: revisionId, contentId: id } });
+    if (!revision || revision.contentId !== id || revision.id !== revisionId) throw new DomainError(404, "NOT_FOUND", "历史版本不存在"); revisions.push(revision);
+  }
+  if (intent === "snapshot" || intent === "publish") {
+    const latest = await tx.contentRevision.findFirst({ where: { contentId: id }, select: { versionNumber: true }, orderBy: { versionNumber: "desc" } });
+    const published = await tx.contentRevision.findFirst({ where: { contentId: id, revisionKind: "PUBLISHED", publishedEditionNumber: { not: null } }, select: { publishedEditionNumber: true }, orderBy: { publishedEditionNumber: "desc" } });
+    if (latest && (!Number.isSafeInteger(latest.versionNumber) || latest.versionNumber < 1) || published && (!Number.isSafeInteger(published.publishedEditionNumber) || published.publishedEditionNumber! < 1)) throw new DomainError(500, "INTERNAL_ERROR", "历史编号记录无效");
+    if (row.publishedRevisionId && !latest || published && !latest || row.publishedRevisionId && !published) throw new DomainError(500, "INTERNAL_ERROR", "发布编号记录不完整");
+    revisionHead = { versionNumber: latest?.versionNumber || 0, publishedEditionNumber: published?.publishedEditionNumber || 0 };
+  }
+  if (intent === "publish") {
+    const canonical = await tx.contentRoute.findMany({ where: { contentId: id, routeKind: "CANONICAL" }, select: { path: true, routeKind: true }, orderBy: { path: "asc" }, take: 2 });
+    if (canonical.length > 1 || row.publishedRevisionId && !canonical.length) throw new DomainError(500, "INTERNAL_ERROR", "主地址记录无效"); routes.push(...canonical);
+  }
+  const context = aggregate({ ...row, revisions, routes });
+  if (context.revisions.some(r => r.payload.type !== context.state.type || r.payload.module !== context.state.module)) throw new DomainError(500, "INTERNAL_ERROR", "历史快照与内容类型不一致");
+  return { ...context, revisionsComplete: false, ...(revisionHead ? { revisionHead } : {}) };
 }
-export async function listAdmin(deleted = false) {
-  const rows = await db().content.findMany({ where: { deletedAt: deleted ? { not: null } : null }, include, orderBy: [{ updatedAt: "desc" }, { id: "desc" }] });
-  return rows.map(aggregate).sort((a, b) => {
-    const recent = (a: Aggregate) => a.draft.lastSavedAt > a.state.updatedAt ? a.draft.lastSavedAt : a.state.updatedAt;
-    return recent(b).localeCompare(recent(a)) || b.state.id.localeCompare(a.state.id);
-  });
-}
+
 function json(value: unknown) { return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue; }
 export type MutationIntent = "create" | "save" | "publish" | "snapshot" | "restore-revision" | "state";
 export async function persistAggregate(tx: Tx, a: Aggregate, adminId: string, before: Aggregate | null, intent: MutationIntent): Promise<Aggregate> {
@@ -59,14 +74,14 @@ export async function persistAggregate(tx: Tx, a: Aggregate, adminId: string, be
   }
   await tx.content.update({ where: { id: s.id }, data: { publicationState: s.publicationState, effectiveVisibility: s.effectiveVisibility, stateVersion: s.stateVersion, publishedRevisionId: s.publishedRevisionId, firstPublishedAt: s.firstPublishedAt ? new Date(s.firstPublishedAt) : null, lastPublishedAt: s.lastPublishedAt ? new Date(s.lastPublishedAt) : null, deletedAt: s.deletedAt ? new Date(s.deletedAt) : null, updatedAt: new Date(s.updatedAt) } });
   if (a.canonicalPath && s.publishedRevisionId && publishedChanged) {
-    const paths = [...new Set([...a.aliases, a.canonicalPath])].sort();
+    const paths = [...new Set([a.canonicalPath, before?.canonicalPath].filter((path): path is string => !!path))].sort();
     await tx.$queryRaw(Prisma.sql`SELECT path FROM content_routes WHERE path IN (${Prisma.join(paths)}) ORDER BY path FOR UPDATE`);
-    for (const path of [...a.aliases, a.canonicalPath]) {
+    for (const path of paths) {
       const existingRoute = await tx.contentRoute.findUnique({ where: { path } });
       if (existingRoute && existingRoute.contentId !== s.id) throw new DomainError(409, "PATH_CONFLICT", "此地址已被使用，请选择其他地址");
     }
     await tx.contentRoute.updateMany({ where: { contentId: s.id, routeKind: "CANONICAL" }, data: { routeKind: "ALIAS" } });
-    for (const path of [...a.aliases, a.canonicalPath]) await tx.contentRoute.upsert({ where: { path }, create: { path, contentId: s.id, routeKind: path === a.canonicalPath ? "CANONICAL" : "ALIAS" }, update: { routeKind: path === a.canonicalPath ? "CANONICAL" : "ALIAS" } });
+    for (const path of paths) await tx.contentRoute.upsert({ where: { path }, create: { path, contentId: s.id, routeKind: path === a.canonicalPath ? "CANONICAL" : "ALIAS" }, update: { routeKind: path === a.canonicalPath ? "CANONICAL" : "ALIAS" } });
     const r = next.revisions.find(r => r.id === s.publishedRevisionId)!;
     const projection = { revisionId: r.id, title: r.payload.title, summary: r.payload.summary, categoryId: r.payload.categoryId, coverMediaId: r.payload.coverMediaId, publishedAt: new Date(s.lastPublishedAt!) };
     await tx.contentPublication.upsert({ where: { contentId: s.id }, create: { contentId: s.id, ...projection }, update: projection });
@@ -84,10 +99,10 @@ export async function persistAggregate(tx: Tx, a: Aggregate, adminId: string, be
   if (!before || s.stateVersion !== before.state.stateVersion) await tx.outboxEvent.create({ data: { eventType: "CONTENT_STATE_CHANGED", aggregateId: s.id, payload: { stateVersion: s.stateVersion, revisionId: s.publishedRevisionId } } });
   return next;
 }
-export async function mutate(options: { adminId: string; scope: string; intent: MutationIntent; key?: string; fingerprint: unknown; contentId?: string; change: (a: Aggregate | null) => Aggregate; result?: (a: Aggregate, before: Aggregate | null) => unknown }) {
+export async function mutate(options: { adminId: string; scope: string; intent: MutationIntent; key?: string; fingerprint: unknown; contentId?: string; revisionId?: string; change: (a: Aggregate | null) => Aggregate; result?: (a: Aggregate, before: Aggregate | null) => unknown }, client: Pick<ReturnType<typeof db>, "$transaction"> = db()) {
   const hash = requestHash(options.fingerprint);
   try {
-    return await db().$transaction(async tx => {
+    return await client.$transaction(async tx => {
       // Serialize only retries of the same idempotent operation, not unrelated contents.
       if (options.key) {
         await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${options.adminId + ":" + options.scope + ":" + options.key}, 0))::text`;
@@ -102,7 +117,7 @@ export async function mutate(options: { adminId: string; scope: string; intent: 
         await lockRows(tx, "contents", [options.contentId]);
         await tx.$queryRaw`SELECT content_id::text FROM content_drafts WHERE content_id = ${options.contentId}::uuid FOR UPDATE`;
       }
-      const before = options.contentId ? await getContent(options.contentId, tx) : null;
+      const before = options.contentId ? await loadWriteContext(tx, options.contentId, options.adminId, options.intent, options.revisionId) : null;
       const next = await persistAggregate(tx, options.change(before), options.adminId, before, options.intent);
       await tx.auditLog.create({ data: { actorId: options.adminId, action: options.scope, targetType: "CONTENT", targetId: next.state.id, metadata: { stateVersion: next.state.stateVersion, draftVersion: next.draft.revisionNumber } } });
       const result = options.result ? options.result(next, before) : viewAdmin(next);

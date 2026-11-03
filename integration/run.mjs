@@ -1,0 +1,11 @@
+import nextEnv from "@next/env";
+const { loadEnvConfig } = nextEnv;
+import { spawn } from "node:child_process";
+loadEnvConfig(process.cwd());
+if (process.env.PERSONAL_SPACE_INTEGRATION !== "true") throw new Error("Isolated integration environment required");
+const [mode, ...extra] = process.argv.slice(2);
+const scripts = { media: "scripts/media-worker.ts", outbox: "scripts/outbox-worker.ts", export: "scripts/export-worker.ts", backup: "scripts/backup-worker.ts", gc: "scripts/media-gc-worker.ts", initialize: "integration/initialize.ts", test: "integration/test-flow.ts", constraints: "integration/test-constraints.ts", recovery: "integration/test-recovery.ts" };
+const args = mode === "web" ? ["node_modules/next/dist/bin/next", "dev", "--hostname", "127.0.0.1", ...extra] : mode === "web-production" ? ["node_modules/next/dist/bin/next", "start", "--hostname", "127.0.0.1", ...extra] : scripts[mode] ? ["--import", "tsx", scripts[mode], ...extra] : null;
+if (!args) throw new Error("Unknown integration mode");
+const child = spawn(process.execPath, args, { env: process.env, stdio: "inherit", windowsHide: true });
+const stop = () => child.kill(); process.on("SIGINT", stop); process.on("SIGTERM", stop); child.on("exit", code => { process.exitCode = code || 0; process.off("SIGINT",stop); process.off("SIGTERM",stop); });

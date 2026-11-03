@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { Prisma } from "@/generated/prisma/client";
 import { db } from "./db";
 import { DomainError, parseStoredPayload, type State, type viewPublic } from "./domain";
@@ -29,7 +30,12 @@ const publicPredicate = Prisma.sql`c.publication_state = 'PUBLISHED' AND c.effec
 const currentJoins = Prisma.sql`FROM contents c JOIN content_revisions r ON r.content_id = c.id AND r.id = c.published_revision_id AND r.revision_kind = 'PUBLISHED'
   JOIN content_routes canonical ON canonical.content_id = c.id AND canonical.route_kind = 'CANONICAL'`;
 const columns = Prisma.sql`c.id, c.type, c.module, c.publication_state, c.effective_visibility, c.deleted_at, c.published_revision_id,
-  r.id AS revision_id, r.revision_kind, r.published_edition_number, r.snapshot, c.last_published_at AS published_at, canonical.path`;
+  r.id AS revision_id, r.revision_kind, r.published_edition_number,
+  jsonb_set(r.snapshot, '{taxonomySnapshot}', jsonb_build_object(
+    'category', (SELECT jsonb_build_object('id', cat.id, 'name', cat.name, 'slug', cat.slug) FROM categories cat WHERE cat.id::text = r.snapshot->>'categoryId' AND cat.deleted_at IS NULL),
+    'tags', COALESCE((SELECT jsonb_agg(jsonb_build_object('id', tag.id, 'name', tag.name, 'slug', tag.slug) ORDER BY ids.ordinality)
+      FROM jsonb_array_elements_text(r.snapshot->'tagIds') WITH ORDINALITY ids(id, ordinality) JOIN tags tag ON tag.id::text = ids.id AND tag.deleted_at IS NULL), '[]'::jsonb)
+  )) AS snapshot, c.last_published_at AS published_at, canonical.path`;
 export function publishedPageQuery(input: PublicFilters) {
   const filters = normalizedFilters(input), limit = input.limit ?? 20;
   if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new DomainError(400, "INVALID_INPUT", "分页大小必须为1至100");
@@ -66,11 +72,34 @@ export async function publishedByPath(path: string, reader?: Reader) {
   if (rows.length !== 1) throw new DomainError(500, "INTERNAL_ERROR", "规范地址不一致");
   return { content: publicationView(rows[0]), alias: !!rows[0].alias };
 }
-export async function publicTaxonomy(kind: "categories" | "tags", reader?: Reader) {
-  if (kind === "categories") return readRows<{ id: string; module: string; parentId: string | null; name: string; slug: string; sortOrder: number; isSystem: boolean; updatedAt: Date }>(Prisma.sql`
-    SELECT t.id, t.module, t.parent_id AS "parentId", t.name, t.slug, t.sort_order AS "sortOrder", t.is_system AS "isSystem", t.updated_at AS "updatedAt" FROM categories t WHERE t.deleted_at IS NULL
-    AND EXISTS(SELECT 1 FROM contents c JOIN content_revisions r ON r.content_id = c.id AND r.id = c.published_revision_id AND r.revision_kind = 'PUBLISHED' WHERE ${publicPredicate} AND r.snapshot->>'categoryId' = t.id::text) ORDER BY t.sort_order, t.id`, reader);
-  return readRows<{ id: string; name: string; slug: string; updatedAt: Date }>(Prisma.sql`
-    SELECT t.id, t.name, t.slug, t.updated_at AS "updatedAt" FROM tags t WHERE t.deleted_at IS NULL
-    AND EXISTS(SELECT 1 FROM contents c JOIN content_revisions r ON r.content_id = c.id AND r.id = c.published_revision_id AND r.revision_kind = 'PUBLISHED' WHERE ${publicPredicate} AND (r.snapshot->'tagIds') ? t.id::text) ORDER BY t.created_at DESC, t.id DESC`, reader);
+export type TaxonomyKind = "categories" | "tags";
+export type TaxonomyPageInput = { limit?: number; cursor?: string | null };
+type CategoryRow = { id: string; module: string; parentId: string | null; name: string; slug: string; sortOrder: number; isSystem: boolean; updatedAt: Date };
+type TagRow = { id: string; name: string; slug: string; updatedAt: Date; createdAt: Date };
+const categoryEpoch = "1970-01-01T00:00:00.000Z";
+const maxSort = 2147483647;
+export function publicTaxonomyQuery(kind: TaxonomyKind, input: TaxonomyPageInput = {}) {
+  const limit = input.limit ?? 20;
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new DomainError(400, "INVALID_INPUT", "分页大小必须为1至100");
+  const filters = { kind: "public-taxonomy", taxonomy: kind, sortVersion: 1 };
+  const after = decodePageCursor(input.cursor || null, filters);
+  if (after && (!z.uuid().safeParse(after.id).success || (kind === "categories" ? after.publishedAt !== categoryEpoch || after.score! > 4294967295 : after.score !== 0))) throw new DomainError(400, "INVALID_INPUT", "目录分页游标已失效");
+  const visible = Prisma.sql`EXISTS(SELECT 1 FROM contents c JOIN content_revisions r ON r.content_id = c.id AND r.id = c.published_revision_id AND r.revision_kind = 'PUBLISHED' WHERE ${publicPredicate} AND ${kind === "categories" ? Prisma.sql`r.snapshot->>'categoryId' = t.id::text` : Prisma.sql`(r.snapshot->'tagIds') ? t.id::text`})`;
+  const boundary = !after ? Prisma.sql`TRUE` : kind === "categories" ? Prisma.sql`(t.sort_order, t.id) > (${maxSort - after.score!}, ${after.id}::uuid)` : Prisma.sql`(t.created_at, t.id) < (${new Date(after.publishedAt)}::timestamptz, ${after.id}::uuid)`;
+  const sql = kind === "categories" ? Prisma.sql`SELECT t.id, t.module, t.parent_id AS "parentId", t.name, t.slug, t.sort_order AS "sortOrder", t.is_system AS "isSystem", t.updated_at AS "updatedAt" FROM categories t WHERE t.deleted_at IS NULL AND ${visible} AND ${boundary} ORDER BY t.sort_order ASC, t.id ASC LIMIT ${limit + 1}` : Prisma.sql`SELECT t.id, t.name, t.slug, t.updated_at AS "updatedAt", t.created_at AS "createdAt" FROM tags t WHERE t.deleted_at IS NULL AND ${visible} AND ${boundary} ORDER BY t.created_at DESC, t.id DESC LIMIT ${limit + 1}`;
+  return { filters, limit, sql };
+}
+export async function publicTaxonomy(kind: TaxonomyKind, input: TaxonomyPageInput = {}, reader?: Reader) {
+  const query = publicTaxonomyQuery(kind, input);
+  if (kind === "categories") {
+    const rows = await readRows<CategoryRow>(query.sql, reader);
+    const page = finishPage(rows.map(row => {
+      if (!Number.isInteger(row.sortOrder) || row.sortOrder < -2147483648 || row.sortOrder > maxSort) throw new DomainError(500, "INTERNAL_ERROR", "分类排序记录无效");
+      return { ...row, publishedAt: categoryEpoch, score: maxSort - row.sortOrder };
+    }), query.limit, query.filters);
+    return { data: page.data.map(({ publishedAt: _, score: __, ...item }) => item), meta: page.meta };
+  }
+  const rows = await readRows<TagRow>(query.sql, reader);
+  const page = finishPage(rows.map(row => ({ ...row, publishedAt: row.createdAt.toISOString(), score: 0 })), query.limit, query.filters);
+  return { data: page.data.map(({ publishedAt: _, score: __, createdAt: ___, ...item }) => item), meta: page.meta };
 }

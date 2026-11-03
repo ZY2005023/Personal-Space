@@ -2,7 +2,7 @@
 
 版本 ADR-1.0 · 2026-11-02 · 状态：技术路线定案，工程验证尚未完成。
 
-实现进展更新：后续N2批次已补齐29个模型、引用同步与公开版本独立查询；本文件第10节保留选型时的代码核对快照，最新完成状态及仍待验证事项以[IMPLEMENTATION.md](IMPLEMENTATION.md)和[N2记录](verification/2026-11-02-data-layer.md)为准。
+实现进展更新：N19已完成30模型、3份真实PG18迁移与本机HTTPS私有S3、认证、导出、备份和隔离恢复联调。本文保留选型时的阶段快照，最新完成状态及验证边界以[IMPLEMENTATION.md](IMPLEMENTATION.md)和[N19记录](verification/2026-11-03-real-integration.md)为准。
 
 本文件承接冻结的产品与数据语义，补齐实现方案。它不将既有示例页面、测试或可构建代码视为完整 V1.0。原五份冻结资料位于 design-delivery，本文件不会覆盖原始交付包。
 
@@ -19,7 +19,7 @@
 | 数据库 | PostgreSQL 18主版本 | 事务、内容版本、引用、路由、搜索、持久化任务；补丁版本在实际安装前锁定 |
 | 数据访问 | Prisma Client/adapter-pg 7.10.1 + pg 8.23.1 | 一般查询使用Prisma；高级约束、锁、搜索使用经审查的参数化SQL |
 | 管理员认证 | next-auth **4.24.15稳定版**（Auth.js体系） | Credentials + JWT会话 + 服务端session_version检查；不设第二套业务登录 |
-| 密码/MFA | @node-rs/argon2 2.2.2；TOTP拟接入otplib 13.6.0 | Argon2id密码/恢复码哈希，TOTP密钥AES-256-GCM加密；现有手写TOTP待库化替换与测试 |
+| 密码/MFA | @node-rs/argon2 2.2.2；TOTP已接入otplib 13.6.0 | Argon2id密码/恢复码哈希，TOTP密钥AES-256-GCM加密；保留RFC向量、时间窗和数据库防重放测试 |
 | 媒体 | 私有S3兼容对象存储 + AWS SDK for JavaScript v3 | 服务端流式读写，不公开原图bucket/key；供应商、地域、桶名属于部署参数 |
 | 图片处理 | Sharp 0.35.5 | 受限解码、校正方向、缩放、WebP派生、清除敏感元数据；原图保持不可变 |
 | 后台任务 | PostgreSQL operation_jobs/outbox + 独立Node Worker | 行级抢占、SKIP LOCKED、租约、fencing token、幂等消费；应用表是业务状态来源 |
@@ -62,7 +62,7 @@ JWT为8小时会话；每次管理读取/写入都再次查询管理员MFA状态
 
 业务写入验证同源Origin与会话相关CSRF证明；Auth.js提供方登录/退出使用其自身CSRF流程。敏感操作的重新认证证明应绑定adminId、session标识、允许的operation、有效期和一次性消费状态；建议5分钟、单次使用。不得把第二次验证变成独立登录会话，也不得对外开放普通“设置PUBLIC”接口绕过发布确认。
 
-TOTP认证保留30秒时间步、最多±1步容差及数据库last_totp_step原子消费；恢复码哈希与used_at条件更新保证单次消费。下一批用otplib替代手写计算，保留已知向量、防重放及错误时间边界测试。密码与恢复码初始化使用Argon2id，初始参数至少19MiB内存、2次迭代、并行度1；须在真实服务器测量延迟并核对当前建议，不能存明文。[密码存储依据](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html)
+TOTP认证保留30秒时间步、最多±1步容差及数据库last_totp_step原子消费；恢复码哈希与used_at条件更新保证单次消费。N5已用otplib替代手写计算，保留已知向量及防重放测试。密码与恢复码初始化使用Argon2id，初始参数至少19MiB内存、2次迭代、并行度1；须在真实服务器测量延迟并核对当前建议，不能存明文。[密码存储依据](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html)
 
 本次认证验证只涵盖提供方发现、CSRF、错误凭据拒绝、无会话及匿名拒绝。真实账号首次绑定、成功登录、过期、撤销、恢复和重认证仍属于IV-01，未通过前不得公网使用。[会话API依据](https://next-auth.js.org/configuration/nextjs)
 
@@ -165,3 +165,55 @@ local_status、integrity_status、offsite_status独立推进。restic上传成�
 已读取12份官方资料，URL及SHA256记录在architecture/sources.json；npm元数据与next-auth发布源码另有证据记录。资料仅用于选型，不代表外部工具已安装或服务已创建。
 
 本次保留原18项逻辑测试并通过；稳定版认证路由兼容检查和原16项本地只读检查通过，类型及生产构建通过。没有真实数据库、账号、MFA绑定、对象存储、备份或部署。IV-01～08仍以实现和运行证据关闭，不能由架构文档代替。
+
+## N4 实现补记：媒体边界
+
+当前媒体响应采用最多10MiB的受限内存缓冲，完成摘要校验并再次检查权限后响应；第5节的流式目标尚未实现。Worker单进程串行处理任务，5分钟租约、30秒续租，最多3次处理；上传预约延迟60秒可被Worker恢复。仅通过同一token且未过期的租约提交READY或失败状态，过期执行器最多留下私有孤立对象。软删除写Outbox，当前不物理删除。
+
+S3写入使用If-None-Match:*，对象已存在时回读比对摘要，默认不发送ACL或公开URL。原图以媒体UUID定位；派生图包含处理版本和内容摘要。处理器/编码配置变更必须提升处理版本，不能复用旧版本。依据：[S3条件写入](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes.html)。真实兼容存储的条件写入和私有策略仍需联调。
+
+S3的bucket、region、HTTPS端点及专用凭据均只由环境配置；Web和Worker都需要读取权限，Worker需要派生图写权限。当前不会创建bucket或修改策略。图片限额暂以imageLimits常量落实工程默认，未提供运行时管理界面。配置、容量、内存峰值和真实设备验收仍是上线阻断项。
+
+## N5 实现补记：管理员安全
+
+30模型中的SecurityChallenge是实现扩展，不覆盖冻结物理稿，也未创建真实表。7项安全动作位于/api/auth/security，复用现有Auth.js会话、Origin与CSRF校验；单独契约见contracts/auth-security.yaml。5分钟一次性再次验证绑定管理员、会话CSRF证明的摘要、会话版本及指定操作；10分钟的MFA绑定凭证另有purpose，取消立即消费并清空待绑定密钥。待确认期间不替换原验证器。
+
+密码/MFA/恢复码更换及显式撤销操作推进session_version，旧JWT后续请求失效。单管理员的普通退出也在Auth.js signOut事件中推进对应版本，界面明确标为“退出全部设备”；旧版本退出不能撤销更新版本。真实数据库故障时的退出/撤销行为仍待验证，不能承诺已发出的响应或离线浏览器内容能被远程收回。
+
+新密码15至128个Unicode码点，不裁剪空格；Argon2id参数19MiB/2次/并行1，真实服务器性能待测。10枚恢复码各128位随机，仅保存独立Argon2id哈希，明文只在成功响应中返回。响应丢失后不能取回原明文，仍可用验证器重新认证并再轮换一组。没有绕过MFA的网页登录恢复入口；验证器和所有恢复码同时丢失的离线身份核验/灾难恢复手册仍未完成。
+
+TOTP密钥加密采用带v1前缀的AES-256-GCM封装及purpose AAD，待绑定密钥与正式密钥不能跨用途解密。旧代码三段式密文不再自动接受；本项目没有已初始化账号或既存密文，未执行数据迁移。如果未来导入旧数据，必须另做受控转换及验证，不能直接上线。
+
+初始化脚本仅在显式--create、真实交互终端、再次文字确认后才访问配置中的现有数据库；必须先配置AUTH_SECRET至少32字节及独立的32字节base64 TOTP密钥。创建账号前验证实际TOTP，事务内串行检查空管理员表并固定singleton_key=1。没有注册API、默认密码、环境变量传密码或自动建库行为。本轮只执行无参数帮助。
+
+## N6 实现补记：恢复登录的限定换绑
+
+恢复码属于实际第二因素。只有本次登录已经原子消费恢复码时，才在同一事务记录5分钟RECOVERY_LOGIN证据，并绑定服务端生成、传递给Auth.js JWT的nonce；再次验证密码后只允许一次MFA_REPLACE。证据不由客户端标志签发，不能跨会话、用途或版本使用。普通TOTP登录没有这项恢复权限。
+
+恢复绑定令牌采用AUTH_SECRET下的域分隔HMAC，数据库只有摘要，不保存明文恢复令牌；密码每次均重新验证。用过的恢复证据只能重放其尚有效的同一待绑定配置，不能创建第二组密钥或延长期限。确认/取消后配置不能再取回。新MFA确认时沿用原有恢复码轮换与会话撤销，不增加第二套登录。
+
+这是针对单管理员和一次性恢复码的工程选择，5分钟为明确的工程窗口，并非宣称OWASP指定参数；恢复必须既能避免锁死，也不能绕过实际第二因素，见[OWASP MFA恢复指南](https://cheatsheetseries.owasp.org/cheatsheets/Multifactor_Authentication_Cheat_Sheet.html)。真实会话/故障/时钟验证及全部因素丢失后的离线核验仍未完成。
+
+## N7 实现补记：后台读取
+
+后台列表不再从完整内容聚合加载所有草稿/历史/路由，SQL只返回AdminSummary。排序键为GREATEST(contents.updated_at, content_drafts.last_saved_at) DESC及ID DESC；这不会推进state_version或覆盖状态时间。列表时间列明确显示“状态更新时间”，实际排序会考虑草稿保存时间。日期精度仍为TIMESTAMPTZ(3)。
+
+当前草稿的分类/标签筛选使用draft_categories/draft_tags；标题同时做NFKC与大小写匹配，百分号、下划线及反斜线按字面转义并绑定参数。normalize仅支持UTF8数据库；语法依据见[PostgreSQL字符串函数](https://www.postgresql.org/docs/18/functions-string.html)与[GREATEST](https://www.postgresql.org/docs/18/functions-conditional.html)。真实locale、索引和执行计划尚未验证，2秒只读查询预算不等于性能已达标。
+
+编辑器只读当前草稿/状态，状态端点只读状态；历史按所属内容及管理员检查，用不可变version_number排序并限制每次limit+1。契约仍返回该页完整Revision快照，默认10、上限100，尚未改为轻量历史摘要。概览用SQL计数，最近记录只读5项；待发布更改比较完整可编辑JSON（排除服务端taxonomySnapshot标签副本），不再只比较标题。
+
+游标绑定管理员、筛选、回收站范围或具体内容。列表是实时键集查询，不是冻结快照；并发编辑可使条目移动到较新位置，需要回到第一页刷新。写事务中的完整聚合暂未改造，发布/恢复仍可能加载全部历史，不应将本轮优化误称为所有路径均已分页。
+
+## N8 实现补记：写事务精简上下文
+
+mutate仍先锁相同幂等键，再锁内容/草稿行，然后才按意图读取当前草稿、必要编号元数据及指定恢复源。保存和状态变化不读取旧历史/路由；创建快照或正式发布各用两个findFirst查询独立的最高历史号与最高正式号，不读取这些旧快照的payload；恢复只按contentId+revisionId取一个所属快照。编号查询应利用既有组合唯一索引，但真实执行计划尚未验证。
+
+内部Aggregate增加非API字段revisionHead及revisionsComplete标记。未加载完整历史又没有编号元数据时，禁止创建新版本；已加载编号时，仍与内存中新版本取最大值，保证组合操作不会重置计数。编号检查整数范围。只有viewAdmin或单Revision进入响应，内部标记不进入数据库payload或工作契约。
+
+发布只读取最多2个CANONICAL记录以识别损坏的重复主地址；地址校验/锁定/更新只处理新旧主地址，历史ALIAS保留在数据库，不再逐一回读或重写。切回自有旧ALIAS仍有效，其他内容/保留路径仍409。所有快照、引用、指针、搜索、审计及幂等结果依旧由同一事务提交。
+
+此优化限制了返回给Node的旧历史payload数量，不是已完成真实性能基准。最高编号查询、并发锁、事务回滚与多实例发布必须在隔离PostgreSQL18验证；不能以替身代替真实索引/角色约束证据。
+
+### N11内容事件搜索修复
+
+CONTENT_STATE_CHANGED按当前锁定内容状态处理，不重放事件中的历史指针。非公开内容清理搜索投影；公开内容仅读取当前正式快照，并锁定分类/标签后使用现名生成搜索文档，与事件确认原子提交。与发布一致遵循content -> categories -> tags -> search锁序，目录改名仍只锁目录/搜索而不反向获取内容锁。此为源码设计及替身证据，真实数据库并发/死锁验证尚未执行。

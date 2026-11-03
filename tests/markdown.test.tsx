@@ -11,3 +11,10 @@ test("reading headings ignore fenced code blocks and assign stable duplicate anc
   assert.deepEqual(headings(body).map(h => h.id), ["section-标题", "section-标题-1"]);
   const html = renderToStaticMarkup(<Markdown body={body}/>); assert.match(html, /id="section-标题"/); assert.match(html, /id="section-标题-1"/);
 });
+test("Markdown resolves only known inline placements to controlled image routes", () => {
+  const p = { placementId: "20000000-0000-4000-8000-000000000001", mediaId: "30000000-0000-4000-8000-000000000001", role: "INLINE" as const, caption: "", altText: "受控图片" };
+  const body = `![label](media://${p.placementId})\n\n![unknown](media://unknown)\n\n![tracker](https://tracker.example/x)`;
+  const html = renderToStaticMarkup(<Markdown body={body} media={{ contentId: "content-id", placements: [p] }}/>);
+  assert.match(html, /src="\/api\/v1\/contents\/content-id\/placements\//); assert.match(html, /alt="受控图片"/); assert.equal((html.match(/<img /g) || []).length, 1); assert.doesNotMatch(html, /src="https:|mediaId/);
+  const admin = renderToStaticMarkup(<Markdown body={body} media={{ admin: true, placements: [p] }}/>); assert.match(admin, /src="\/api\/v1\/admin\/media\//);
+});

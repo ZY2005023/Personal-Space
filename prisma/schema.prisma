@@ -26,6 +26,7 @@ model AdminUser {
   idempotencyRecord_admin IdempotencyRecord[] @relation("IdempotencyRecord_admin")
   auditLog_actor          AuditLog[]          @relation("AuditLog_actor")
   systemSetting_admin     SystemSetting[]     @relation("SystemSetting_admin")
+  securityChallenges      SecurityChallenge[]
 
   @@map("admin_users")
 }
@@ -40,6 +41,27 @@ model RecoveryCode {
 
   @@unique([adminId, codeHash])
   @@map("admin_recovery_codes")
+}
+
+// Implementation extension: single-use, session-bound reauthentication/enrollment records.
+// No table or migration has been created. Physical CHECKs remain pending.
+model SecurityChallenge {
+  id               String    @id @default(uuid()) @db.Uuid
+  adminId          String    @map("admin_id") @db.Uuid
+  tokenHash        String    @unique @map("token_hash") @db.Char(64)
+  purpose          String    @db.VarChar(24)
+  operation        String    @db.VarChar(32)
+  sessionHash      String    @map("session_hash") @db.Char(64)
+  sessionVersion   Int       @map("session_version")
+  encryptedPayload String?   @map("encrypted_payload")
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  expiresAt        DateTime  @map("expires_at") @db.Timestamptz(3)
+  usedAt           DateTime? @map("used_at") @db.Timestamptz(3)
+  admin            AdminUser @relation(fields: [adminId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([adminId, purpose, expiresAt])
+  @@index([expiresAt])
+  @@map("security_challenges")
 }
 
 model LoginThrottle {

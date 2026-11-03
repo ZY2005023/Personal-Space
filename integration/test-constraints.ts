@@ -1,0 +1,43 @@
+import assert from "node:assert/strict";
+import { randomUUID, randomBytes } from "node:crypto";
+import { writeFile } from "node:fs/promises";
+import { Client } from "pg";
+import { db } from "../src/lib/db";
+import { AuthClient } from "./http-client";
+import { runMediaJob } from "../src/lib/media-worker";
+const checks:string[]=[], client=new Client({connectionString:process.env.DATABASE_URL});
+const pass=(name:string)=>{checks.push(name);console.log(`PASS ${checks.length}: ${name}`);};
+async function fails(name:string,fn:()=>Promise<unknown>,codes=["23514","23505","23503","42501"]){await client.query("BEGIN");let error:any;try{await fn();await client.query("SET CONSTRAINTS ALL IMMEDIATE");}catch(e){error=e;}finally{await client.query("ROLLBACK");}assert.ok(error&&codes.includes(error.code),`${name}: unexpected outcome ${error?.code || "accepted"}: ${error?.message || "no error"}`);pass(name);}
+async function main(){
+ if(process.env.PERSONAL_SPACE_INTEGRATION!=="true")throw new Error("Isolated integration required");await client.connect();
+ const role=await client.query("SELECT rolsuper,rolcreatedb,pg_has_role(current_user,'personal_space_maintenance','MEMBER') AS maintenance FROM pg_roles WHERE rolname=current_user");assert.equal(role.rows[0].rolsuper,false);assert.equal(role.rows[0].rolcreatedb,false);assert.equal(role.rows[0].maintenance,false);pass("runtime uses non-owner, non-maintenance role");
+ const admin=(await client.query("SELECT id FROM admin_users LIMIT 1")).rows[0].id;
+ const published=(await client.query("SELECT c.id,c.published_revision_id FROM contents c WHERE publication_state='PUBLISHED' AND effective_visibility='PUBLIC' AND deleted_at IS NULL LIMIT 1")).rows[0];assert.ok(published);
+ const manual=(await client.query("SELECT id,content_id FROM content_revisions WHERE revision_kind='MANUAL_SNAPSHOT' LIMIT 1")).rows[0];
+ const cat=(await client.query("SELECT category_id FROM content_publications WHERE category_id IS NOT NULL LIMIT 1")).rows[0].category_id;
+ const media=(await client.query("SELECT media_id FROM content_media LIMIT 1")).rows[0].media_id;
+ await fails("singleton CHECK rejects a second singleton key",()=>client.query("INSERT INTO admin_users(id,singleton_key,username,password_hash,updated_at) VALUES($1,2,$2,'not-a-real-hash',now())",[randomUUID(),"constraint-"+randomUUID()]));
+ await fails("history UPDATE denied by ordinary role",()=>client.query("UPDATE content_revisions SET snapshot=snapshot WHERE id=$1",[published.published_revision_id]),["42501"]);
+ await fails("audit UPDATE denied by ordinary role",()=>client.query("UPDATE audit_logs SET action=action"),["42501"]);
+ await fails("root category NULL-parent uniqueness enforced",async()=>{const name="constraint-"+randomUUID();for(let n=0;n<2;n++)await client.query("INSERT INTO categories(id,module,parent_id,name,normalized_name,slug,updated_at) VALUES($1,'LIFE',NULL,$2::text,$2::text,$2::text,now())",[randomUUID(),name]);});
+ await fails("third category level rejected",async()=>{const root=randomUUID(),child=randomUUID();for(const [id,parent]of[[root,null],[child,root],[randomUUID(),child]]){const slug="constraint-"+id;await client.query("INSERT INTO categories(id,module,parent_id,name,normalized_name,slug,updated_at) VALUES($1,'LIFE',$2,$3::text,$3::text,$3::text,now())",[id,parent,slug]);}});
+ await fails("canonical path partial uniqueness enforced",()=>client.query("INSERT INTO content_routes(id,path,content_id,route_kind,updated_at) VALUES($1,$2,$3,'CANONICAL',now())",[randomUUID(),"/life/constraint-"+randomUUID(),published.id]));
+ await fails("manual revision cannot become the live pointer",()=>client.query("UPDATE contents SET published_revision_id=$1 WHERE id=$2",[manual.id,manual.content_id]));
+ await fails("published revision needs a nonnull edition",()=>client.query("INSERT INTO content_revisions(id,content_id,version_number,published_edition_number,revision_kind,snapshot) SELECT $1,content_id,1000000,NULL,'PUBLISHED',snapshot FROM content_revisions WHERE id=$2",[randomUUID(),published.published_revision_id]));
+ await fails("referenced category cannot be soft-deleted",()=>client.query("UPDATE categories SET deleted_at=now() WHERE id=$1",[cat]));
+ await fails("referenced media cannot be soft-deleted",()=>client.query("UPDATE media SET deleted_at=now() WHERE id=$1",[media]));
+ await fails("publication placement drift rejected at commit",()=>client.query("UPDATE content_media SET alt_text='invalid-drift' WHERE content_id=$1",[published.id]));
+ await fails("live search text drift rejected at commit",()=>client.query("UPDATE content_search_documents SET title='invalid-drift' WHERE content_id=$1",[published.id]));
+ await fails("public search projection cannot be removed",()=>client.query("DELETE FROM content_search_documents WHERE content_id=$1",[published.id]));
+ await fails("content cannot lose its working draft",async()=>{for(const table of["draft_media","draft_categories","draft_tags","content_drafts"])await client.query(`DELETE FROM ${table} WHERE content_id=$1`,[published.id]);});
+ await fails("COMPLETED idempotency response requires status",()=>client.query("INSERT INTO idempotency_records(id,admin_id,operation_scope,idempotency_key,request_hash,status,response_reference,expires_at) VALUES($1,$2,'constraint',$3,$4,'COMPLETED','{}',now()+interval '1 hour')",[randomUUID(),admin,randomUUID(),"0".repeat(64)]));
+ await fails("PENDING job cannot carry a running lease",()=>client.query("INSERT INTO operation_jobs(id,job_type,status,payload,lease_token,lease_until,updated_at) VALUES($1,'EXPORT','PENDING','{}',$2,now()+interval '1 minute',now())",[randomUUID(),randomUUID()]));
+ await fails("REAUTH proof cannot contain MFA enrollment material",()=>client.query("INSERT INTO security_challenges(id,admin_id,token_hash,purpose,operation,session_hash,session_version,encrypted_payload,expires_at) VALUES($1,$2,$3,'REAUTH','EXPORT_CREATE',$4,1,'invalid',now()+interval '5 minutes')",[randomUUID(),admin,randomBytes(32).toString('hex'),randomBytes(32).toString('hex')]));
+ const indexes=await client.query("SELECT indexname FROM pg_indexes WHERE indexname LIKE 'search_%_trgm'");assert.equal(indexes.rowCount,5);pass("five pg_trgm indexes installed");
+ const plan=await client.query("EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) SELECT content_id FROM content_search_documents WHERE title ILIKE '%联调%' LIMIT 10");pass("actual Chinese contains query plan executed");
+ const http=new AuthClient();await http.login();let model=(await http.json(`/api/v1/admin/contents/${manual.content_id}`)).value.data;const {taxonomySnapshot,...body}=model.draft.payload;
+ const writes=await Promise.all(["parallel-a","parallel-b"].map(title=>http.raw(`/api/v1/admin/contents/${manual.content_id}/draft`,{method:"PUT",headers:{"Content-Type":"application/json","If-Match":model.draft.etag},body:JSON.stringify({...body,title})})));assert.deepEqual(writes.map(r=>r.status).sort(),[200,412]);pass("concurrent same-ETag writes produce one success and one conflict");
+ const invalid=await db().operationJob.create({data:{jobType:"MEDIA_PROCESS",payload:{}}});const claims=await Promise.all([runMediaJob(),runMediaJob()]);assert.equal(claims.filter(Boolean).length,1);assert.equal((await db().operationJob.findUniqueOrThrow({where:{id:invalid.id}})).status,"FAILED");pass("SKIP LOCKED prevents two workers claiming one media job");
+ await writeFile("work/integration/evidence/constraints.json",JSON.stringify({passed:true,checks,searchPlan:plan.rows[0],completedAt:new Date().toISOString()},null,2));
+}
+void main().catch(e=>{console.error(e instanceof Error?e.message:"constraint tests failed");process.exitCode=1;}).finally(async()=>{await client.end();await db().$disconnect();});

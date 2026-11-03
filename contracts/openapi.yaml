@@ -2,10 +2,10 @@ openapi: 3.1.1
 jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 info:
   title: Personal Space V1.0 API
-  version: 1.0.1
+  version: 1.0.2
   description: '2026-11-02 设计交付契约；不是已运行服务。Auth.js提供方端点不由业务API重建。所有x-contract-rules为规范性规则。
 
-    2026-11-02 技术修订：503未就绪响应与稳定版会话cookie逻辑名称。原冻结文件保留。本契约仍描述完整V1目标，不表示当前实现全部覆盖。'
+    2026-11-02 技术修订：503未就绪响应与稳定版会话cookie逻辑名称；1.0.2增加管理员派生图预览。原冻结文件保留。本契约仍描述完整V1目标，不表示当前实现全部覆盖。'
 servers:
 - url: /api/v1
   description: 同源相对前缀，无部署地址
@@ -1396,6 +1396,51 @@ paths:
         in: path
         required: true
         schema: *id001
+  /admin/media/{mediaId}/image:
+    get:
+      operationId: getAdminImage
+      summary: 管理员读取清理元数据后的派生图
+      description: 管理员会话及媒体归属校验；仅READY且激活的安全派生图。无需发布，适用于媒体库和草稿预览。不返回存储路径或直链。
+      tags:
+      - 管理
+      security:
+      - adminSession: []
+      parameters:
+      - name: mediaId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: variant
+        in: query
+        required: true
+        schema:
+          type: string
+          enum: [THUMBNAIL, DISPLAY]
+      responses:
+        '200':
+          description: 安全派生图二进制
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            image/webp:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/Problem400'
+        '401':
+          $ref: '#/components/responses/Problem401'
+        '404':
+          $ref: '#/components/responses/Problem404'
+        '422':
+          $ref: '#/components/responses/Problem422'
+        '503':
+          $ref: '#/components/responses/Problem503'
   /admin/categories:
     get:
       operationId: listAdminCategory
@@ -3381,6 +3426,6 @@ x-implementation-status:
   version: 0.1.0
   fullContractImplemented: false
   reference: docs/IMPLEMENTATION.md
-  databaseInitialized: false
-  realAuthLoginVerified: false
-  note: 本文件是目标契约；现有部分路由返回FEATURE_NOT_READY。
+  databaseInitialized: true
+  realAuthLoginVerified: true
+  note: 第一版主要功能已通过本机真实服务联调，完整48条工程验收未全部签收；未配置服务返回503。

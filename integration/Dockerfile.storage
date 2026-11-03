@@ -1,0 +1,9 @@
+FROM golang:1 AS build
+ENV CGO_ENABLED=0
+RUN go install github.com/minio/minio@latest
+FROM debian:stable-slim
+COPY --from=build /go/bin/minio /usr/local/bin/minio
+RUN mkdir /data && chown 1000:1000 /data
+USER 1000:1000
+ENTRYPOINT ["minio"]
+CMD ["server", "/data", "--console-address", ":9001", "--quiet"]

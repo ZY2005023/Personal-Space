@@ -1,0 +1,881 @@
+openapi: 3.1.1
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+info:
+  title: Personal Space Auth.js安全集成扩展
+  version: 0.3.0
+  description: 复用同一Auth.js会话与业务CSRF校验，不提供第二套登录或注册。此文件记录提供方命名空间下的应用安全扩展；不重定义Auth.js自身端点。仅代码/替身验证，真实账号和数据库尚未初始化。
+servers:
+- url: /api/auth/security
+security:
+- adminSession: []
+paths:
+  /reauthenticate:
+    post:
+      operationId: reauthenticateAdmin
+      description: 验证当前密码与第二因素，签发5分钟的限定操作一次性证明
+      parameters:
+      - name: X-CSRF-Token
+        in: header
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReauthenticateInput'
+      responses:
+        '200':
+          description: 成功
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ReauthenticateResult'
+                required:
+                - data
+        '400':
+          description: 请求失败；不返回凭据或内部细节
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: 会话无效或密码/因素验证失败
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: CSRF失败或证明无效/过期/已用/范围不匹配
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: 请求失败；不返回凭据或内部细节
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '413':
+          description: 请求失败；不返回凭据或内部细节
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: 请求失败；不返回凭据或内部细节
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: 持续限流，重试不清除次数
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '503':
+          description: 请求失败；不返回凭据或内部细节
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /password:
+    post:
+      operationId: changeAdminPassword
+      description: 消费PASSWORD_CHANGE证明并修改密码、撤销全部旧会话
+      parameters:
+      - name: X-CSRF-Token
+        in: header
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordInput'
+      responses:
+        '200':
+          description: 成功
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/RevokedResult'
+                required:
+                - data
+        '400':
+          description: 请求失败；不返回凭据或内部细节
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: 会话无效或密码/因素验证失败
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: CSRF失败或证明无效/过期/已用/范围不匹配
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: 请求失败；不返回凭据或内部细节
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '413':
+          description: 请求失败；不返回凭据或内部细节
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: 请求失败；不返回凭据或内部细节
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: 持续限流，重试不清除次数
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '503':
+          description: 请求失败；不返回凭据或内部细节
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /recovery-codes:
+    post:
+      operationId: resetAdminRecoveryCodes
+      description: 消费RECOVERY_RESET证明；旧码失效，新码明文只在响应展示，撤销全部旧会话
+      parameters:
+      - name: X-CSRF-Token
+        in: header
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProofInput'
+      responses:
+        '200':
+          description: 成功
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/RecoveryResult'
+                required:
+                - data
+        '400':
+          description: 请求失败；不返回凭据或内部细节
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: 会话无效或密码/因素验证失败
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: CSRF失败或证明无效/过期/已用/范围不匹配
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: 请求失败；不返回凭据或内部细节
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '413':
+          description: 请求失败；不返回凭据或内部细节
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: 请求失败；不返回凭据或内部细节
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: 持续限流，重试不清除次数
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '503':
+          description: 请求失败；不返回凭据或内部细节
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /revoke-sessions:
+    post:
+      operationId: revokeAdminSessions
+      description: 消费SESSIONS_REVOKE证明并撤销全部旧会话
+      parameters:
+      - name: X-CSRF-Token
+        in: header
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProofInput'
+      responses:
+        '200':
+          description: 成功
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/RevokedResult'
+                required:
+                - data
+        '400':
+          description: 请求失败；不返回凭据或内部细节
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: 会话无效或密码/因素验证失败
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: CSRF失败或证明无效/过期/已用/范围不匹配
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: 请求失败；不返回凭据或内部细节
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '413':
+          description: 请求失败；不返回凭据或内部细节
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: 请求失败；不返回凭据或内部细节
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: 持续限流，重试不清除次数
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '503':
+          description: 请求失败；不返回凭据或内部细节
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /mfa-start:
+    post:
+      operationId: beginAdminMfaReplacement
+      description: 消费MFA_REPLACE证明；签发10分钟绑定凭证并返回新密钥，原验证器暂不改变
+      parameters:
+      - name: X-CSRF-Token
+        in: header
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProofInput'
+      responses:
+        '200':
+          description: 成功
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/EnrollmentResult'
+                required:
+                - data
+        '400':
+          description: 请求失败；不返回凭据或内部细节
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: 会话无效或密码/因素验证失败
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: CSRF失败或证明无效/过期/已用/范围不匹配
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: 请求失败；不返回凭据或内部细节
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '413':
+          description: 请求失败；不返回凭据或内部细节
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: 请求失败；不返回凭据或内部细节
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: 持续限流，重试不清除次数
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '503':
+          description: 请求失败；不返回凭据或内部细节
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /mfa-confirm:
+    post:
+      operationId: confirmAdminMfaReplacement
+      description: 消费绑定凭证并核对新验证码，替换验证器及恢复码并撤销旧会话
+      parameters:
+      - name: X-CSRF-Token
+        in: header
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MfaConfirmInput'
+      responses:
+        '200':
+          description: 成功
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/RecoveryResult'
+                required:
+                - data
+        '400':
+          description: 请求失败；不返回凭据或内部细节
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: 会话无效或密码/因素验证失败
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: CSRF失败或证明无效/过期/已用/范围不匹配
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: 请求失败；不返回凭据或内部细节
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '413':
+          description: 请求失败；不返回凭据或内部细节
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: 请求失败；不返回凭据或内部细节
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: 持续限流，重试不清除次数
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '503':
+          description: 请求失败；不返回凭据或内部细节
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /mfa-cancel:
+    post:
+      operationId: cancelAdminMfaReplacement
+      description: 消费并取消待确认的绑定凭证，清空加密待绑定密钥，当前验证器与会话保持有效。
+      parameters:
+      - name: X-CSRF-Token
+        in: header
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MfaCancelInput'
+      responses:
+        '200':
+          description: 成功
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/CancelledResult'
+                required:
+                - data
+        '400':
+          description: 请求失败；不返回凭据或内部细节
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: 会话无效或密码/因素验证失败
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: CSRF失败或证明无效/过期/已用/范围不匹配
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: 请求失败；不返回凭据或内部细节
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '413':
+          description: 请求失败；不返回凭据或内部细节
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: 请求失败；不返回凭据或内部细节
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: 持续限流，重试不清除次数
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '503':
+          description: 请求失败；不返回凭据或内部细节
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /recovery-mfa-start:
+    post:
+      operationId: beginRecoveryLoginMfa
+      description: 仅适用本次已成功消费恢复码的同一Auth.js会话；再次核对密码，在原5分钟内单次开始验证器换绑。开始请求丢失响应时返回同一待绑定配置，不延长期限。不能用于改密码或直接领取恢复码；确认新验证器时统一轮换恢复码。
+      parameters:
+      - name: X-CSRF-Token
+        in: header
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecoveryMfaStartInput'
+      responses:
+        '200':
+          description: 成功
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: '#/components/schemas/EnrollmentResult'
+                required:
+                - data
+        '400':
+          description: 请求失败；不返回凭据或内部细节
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: 会话无效或密码/因素验证失败
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: CSRF失败或证明无效/过期/已用/范围不匹配
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: 请求失败；不返回凭据或内部细节
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '413':
+          description: 请求失败；不返回凭据或内部细节
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: 请求失败；不返回凭据或内部细节
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: 持续限流，重试不清除次数
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '503':
+          description: 请求失败；不返回凭据或内部细节
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+components:
+  securitySchemes:
+    adminSession:
+      type: apiKey
+      in: cookie
+      name: next-auth.session-token
+      description: next-auth 4.24.15统一会话的逻辑cookie名称。生产HTTPS前缀由提供方管理，业务通过getServerSession读取，不硬编码cookie。MFA与会话撤销仍需真实集成验证。
+  schemas:
+    Problem:
+      type: object
+      additionalProperties: false
+      properties:
+        type:
+          type: string
+          format: uri-reference
+        title:
+          type: string
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        detail:
+          type: string
+        instance:
+          type: string
+        code:
+          type: string
+          enum:
+          - INVALID_INPUT
+          - UNAUTHENTICATED
+          - FORBIDDEN
+          - NOT_FOUND
+          - PATH_CONFLICT
+          - RESOURCE_REFERENCED
+          - DRAFT_CONFLICT
+          - STATE_CONFLICT
+          - PRECONDITION_REQUIRED
+          - IDEMPOTENCY_MISMATCH
+          - OPERATION_IN_PROGRESS
+          - MEDIA_NOT_READY
+          - REAUTH_REQUIRED
+          - PAYLOAD_TOO_LARGE
+          - UNSUPPORTED_MEDIA_TYPE
+          - RATE_LIMITED
+          - INTERNAL_ERROR
+          - SERVICE_UNAVAILABLE
+          - FEATURE_NOT_READY
+        requestId:
+          type: string
+        errors:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            properties:
+              pointer:
+                type: string
+              message:
+                type: string
+            required:
+            - pointer
+            - message
+      required:
+      - type
+      - title
+      - status
+      - code
+      - requestId
+    ReauthenticateInput:
+      type: object
+      additionalProperties: false
+      properties:
+        operation:
+          type: string
+          enum: &id001
+          - PASSWORD_CHANGE
+          - MFA_REPLACE
+          - RECOVERY_RESET
+          - SESSIONS_REVOKE
+          - EXPORT_CREATE
+          - BACKUP_CREATE
+        password:
+          type: string
+          minLength: 1
+          maxLength: 1024
+        code:
+          type: string
+          minLength: 1
+          maxLength: 128
+        recovery:
+          type: boolean
+      required:
+      - operation
+      - password
+      - code
+      - recovery
+    ReauthenticateResult:
+      type: object
+      additionalProperties: false
+      properties:
+        token: &id002
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        operation:
+          type: string
+          enum: *id001
+        expiresAt: &id003
+          type: string
+          format: date-time
+      required:
+      - token
+      - operation
+      - expiresAt
+    ProofInput:
+      type: object
+      additionalProperties: false
+      properties:
+        token: *id002
+      required:
+      - token
+    PasswordInput:
+      type: object
+      additionalProperties: false
+      properties:
+        token: *id002
+        newPassword:
+          type: string
+          description: 15至128个Unicode码点，保留空格，不允许NUL；服务端按码点计数。
+      required:
+      - token
+      - newPassword
+    MfaConfirmInput:
+      type: object
+      additionalProperties: false
+      properties:
+        bindingToken: *id002
+        code:
+          type: string
+          pattern: ^[0-9]{6}$
+      required:
+      - bindingToken
+      - code
+    RevokedResult:
+      type: object
+      additionalProperties: false
+      properties:
+        sessionsRevoked:
+          type: boolean
+          const: true
+      required:
+      - sessionsRevoked
+    RecoveryResult:
+      type: object
+      additionalProperties: false
+      properties:
+        recoveryCodes:
+          type: array
+          minItems: 10
+          maxItems: 10
+          uniqueItems: true
+          items:
+            type: string
+            pattern: ^[a-f0-9]{4}(?:-[a-f0-9]{4}){7}$
+        sessionsRevoked:
+          type: boolean
+          const: true
+      required:
+      - recoveryCodes
+      - sessionsRevoked
+    EnrollmentResult:
+      type: object
+      additionalProperties: false
+      properties:
+        bindingToken: *id002
+        secret:
+          type: string
+          description: 仅返回给当前管理员，手动添加到验证器；不记录到审计。
+        uri:
+          type: string
+          description: otpauth URI，仅用于验证器配置，不是登录链接。
+        expiresAt: *id003
+      required:
+      - bindingToken
+      - secret
+      - uri
+      - expiresAt
+    MfaCancelInput:
+      type: object
+      additionalProperties: false
+      properties:
+        bindingToken:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+      required:
+      - bindingToken
+    CancelledResult:
+      type: object
+      additionalProperties: false
+      properties:
+        cancelled:
+          type: boolean
+          const: true
+      required:
+      - cancelled
+    RecoveryMfaStartInput:
+      type: object
+      additionalProperties: false
+      properties:
+        password:
+          type: string
+          minLength: 1
+          maxLength: 1024
+      required:
+      - password
