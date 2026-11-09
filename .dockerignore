@@ -1,0 +1,16 @@
+node_modules
+.next
+.git
+.gitignore
+work
+coverage
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+docs
+tests
+integration
+scripts/browser-check.ts
+deploy/postgres-init
+*.log

@@ -22,11 +22,15 @@ node integration/run.mjs backup
 
 新机器需先构建integration/Dockerfile.storage和integration/Dockerfile.database，镜像名分别personal-space-integration-storage:local、personal-space-integration-database:local，再执行setup-local、npx prisma migrate deploy、node integration/run.mjs initialize。仅用于明确授权的本机隔离环境，初始化脚本会建立测试角色/恢复目标/私有桶及测试账号。生产账号继续使用交互式npm run admin:init。
 
-真实测试命令为node integration/run.mjs test、constraints、recovery。会创建和修改测试数据/凭据；并发认领测试需先停止其他Worker。请勿对生产配置运行。自动备份保持false，GC可使用node integration/run.mjs gc --once；当前1秒宽限期仅适用于可丢弃测试数据。
+真实测试命令为node integration/run.mjs test、acceptance、constraints、recovery。会创建和修改测试数据/凭据；并发认领测试需先停止其他Worker。acceptance会消费一枚未使用恢复码并创建测试内容。请勿对生产配置运行。自动备份保持false，GC可使用node integration/run.mjs gc --once；当前1秒宽限期仅适用于可丢弃测试数据。恢复演练前如目标库/桶已有上次数据，先执行node integration/run.mjs reset-restore；它只会清空隔离的personal_space_restore与ps-restore测试桶。完成演练后可执行node integration/run.mjs restored，用恢复库和独立桶启动127.0.0.1:3002的第二实例，按ps_app最小权限验证备份凭据登录、后台/公开/媒体读取及私密拒绝；使用work/integration/backup-login.json中演练前凭据。
 
 ## Web与Worker
 
 Web运行npm run dev或生产构建后npm start。媒体处理为npm run worker:media，Outbox为npm run worker:outbox，内容导出为npm run worker:export，数据库/媒体备份为npm run worker:backup，媒体物理清理为npm run worker:gc。每个Worker支持--once；--help只显示用法。Web与Worker需使用同一数据库和配置。
+
+Web提供/health/live（进程存活）与/health/ready（必要配置、数据库、pg_trgm、迁移及关键表；失败503且不暴露细节）。API与安全端点输出每行一个JSON的请求日志，包含requestId、方法、路径、状态与耗时，不记录正文、查询串、Cookie或凭据。正式部署、Caddy、镜像与更新/回退步骤见[上线运行手册](DEPLOYMENT.md)。
+
+浏览器模拟检查：在生产构建运行时执行npm run test:browser。它用本机Chrome无头模式登录真实会话，检查公开/后台页面在1440与390宽度的横向溢出和可见控件44px目标，截图与browser.json写入work/integration/browser。它不替代真实手机、读屏或200%缩放验收。
 
 导出私有文件根目录EXPORT_DIRECTORY必须是绝对路径，位于Web静态目录之外；默认工程预算64MiB、下载24小时，可用EXPORT_MAX_BYTES/EXPORT_TTL_SECONDS调整。这些不是冻结设计中的备份保留政策。后台“导出与备份”输入当前密码与验证器/恢复码后创建，保存任务链接可继续查看。ZIP保存在任务/执行token独立目录，下载过期后HTTP404；本轮不自动删除过期归档文件。
 

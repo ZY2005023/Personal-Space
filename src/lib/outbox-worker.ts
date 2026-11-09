@@ -6,6 +6,7 @@ import { DomainError, requestHash } from "./domain";
 
 type Client = Pick<ReturnType<typeof db>, "$transaction">;
 import { reconcileContentSearch } from "./search-reconciliation";
+import { log } from "./logger";
 const deletion = z.object({ mediaId: z.uuid() }).strict();
 const maxAttempts = 5;
 /** Only events with an implemented handler are claimed. Unknown events stay pending. */
@@ -48,6 +49,7 @@ export async function runOutboxEvent(client: Client = db()): Promise<boolean> {
     }, { timeout: 10_000 });
   } catch (error) {
     const permanent = error instanceof DomainError && error.status < 500;
+    log(permanent ? "warn" : "error", "outbox.event.failed", { eventId: event.id, eventType: event.eventType, attempts: event.attempts, permanent });
     await client.$transaction(async tx => {
       if (!await fence(tx)) return;
       const failed = permanent || event.attempts >= maxAttempts;

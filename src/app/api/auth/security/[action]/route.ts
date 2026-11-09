@@ -4,9 +4,10 @@ import { DomainError } from "@/lib/domain";
 import { ReauthOperation, tokenHash, type SecurityContext } from "@/lib/auth-policy";
 import { beginMfaReplacement, cancelMfaReplacement, changePassword, confirmMfaReplacement, reauthenticate, resetRecoveryCodes, revokeSessions } from "@/lib/security-store";
 import { beginRecoveryMfa } from "@/lib/recovery-login";
+import { logRequest } from "@/lib/logger";
 export const dynamic = "force-dynamic";
 const proof = z.string().regex(/^[a-f0-9]{64}$/);
-export async function POST(request: Request, context: { params: Promise<{ action: string }> }) {
+async function handle(request: Request, context: { params: Promise<{ action: string }> }, requestId: string) {
   try {
     const session = await requireAdminSession(request);
     if (!session.csrfToken || !session.sessionVersion) throw new DomainError(401, "UNAUTHENTICATED", "请重新登录");
@@ -26,5 +27,17 @@ export async function POST(request: Request, context: { params: Promise<{ action
     if (action === "recovery-codes") return ok(await resetRecoveryCodes(security, body.token));
     if (action === "mfa-start") return ok(await beginMfaReplacement(security, body.token));
     return ok(await revokeSessions(security, body.token));
-  } catch (e) { return problem(e); }
+  } catch (e) { return problem(e, requestId); }
+}
+export async function POST(request: Request, context: { params: Promise<{ action: string }> }) {
+  const startedAt = Date.now(), requestId = crypto.randomUUID();
+  try {
+    const response = await handle(request, context, requestId);
+    logRequest(request, response.status, startedAt, requestId);
+    return response;
+  } catch (error) {
+    const response = problem(error, requestId);
+    logRequest(request, response.status, startedAt, requestId, error instanceof DomainError ? error.code : "INTERNAL_ERROR");
+    return response;
+  }
 }

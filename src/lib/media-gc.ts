@@ -5,6 +5,7 @@ import { db } from "./db";
 import { DomainError } from "./domain";
 import { objectStore, type RemovableObjectStore } from "./object-store";
 import { lockRows } from "./reference-store";
+import { log } from "./logger";
 const Payload = z.strictObject({ mediaId: z.uuid(), sourceEventId: z.uuid() });
 type Client = Pick<ReturnType<typeof db>, "$transaction">;
 export function claimGcSql(token: string) { return Prisma.sql`WITH candidate AS (SELECT id FROM operation_jobs WHERE job_type = 'MEDIA_GC' AND ((status = 'PENDING' AND (next_attempt_at IS NULL OR next_attempt_at <= clock_timestamp())) OR (status = 'RUNNING' AND lease_until <= clock_timestamp())) ORDER BY created_at, id FOR UPDATE SKIP LOCKED LIMIT 1) UPDATE operation_jobs j SET status = 'RUNNING', attempts = attempts + 1, lease_token = ${token}::uuid, lease_until = clock_timestamp() + interval '5 minutes', started_at = COALESCE(started_at, clock_timestamp()), updated_at = clock_timestamp() FROM candidate WHERE j.id = candidate.id RETURNING j.id`; }
@@ -34,6 +35,7 @@ export async function runMediaGc(graceMs: number, store: RemovableObjectStore = 
       await tx.operationJob.update({ where: { id: job.id }, data: { status: "SUCCEEDED", result: { mediaId: media.id, removedCount: keys.size }, errorCode: null, completedAt: new Date(), nextAttemptAt: null, leaseToken: null, leaseUntil: null } });
     }, { timeout: 240000 });
   } catch (error) {
+    log("warn", "media.gc.blocked", { jobId: job.id, attempts: job.attempts, code: error instanceof DomainError ? error.code : "STORAGE_UNAVAILABLE" });
     await client.$transaction(async tx => { if (!await fence(tx)) return; const failed = error instanceof DomainError && error.status < 500 || job.attempts >= 3; await tx.operationJob.update({ where: { id: job.id }, data: { status: failed ? "FAILED" : "PENDING", errorCode: "MEDIA_GC_BLOCKED", completedAt: failed ? new Date() : null, nextAttemptAt: failed ? null : new Date(Date.now() + job.attempts * 30000), leaseToken: null, leaseUntil: null } }); });
   }
   return true;

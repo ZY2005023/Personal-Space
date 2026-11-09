@@ -6,9 +6,9 @@ import { assertWriteProof } from "./request-security";
 export function ok(data: unknown, status = 200, headers: Record<string, string> = {}) {
   return Response.json({ data }, { status, headers: { "Cache-Control": "private, no-store", ...headers } });
 }
-export function problem(error: unknown) {
+export function problem(error: unknown, requestId: string = randomUUID()) {
   const domain = error instanceof DomainError ? error : error instanceof ZodError ? new DomainError(422, "INVALID_INPUT", "请检查填写的内容") : new DomainError(503, "SERVICE_UNAVAILABLE", "服务暂不可用，请稍后重试");
-  return Response.json({ type: "about:blank", title: domain.message, detail: domain.message, status: domain.status, code: domain.code, requestId: randomUUID(), ...(error instanceof ZodError ? { errors: error.issues.map(i => ({ pointer: "/" + i.path.join("/"), message: i.message })) } : {}) }, { status: domain.status, headers: { "Content-Type": "application/problem+json", "Cache-Control": "private, no-store" } });
+  return Response.json({ type: "about:blank", title: domain.message, detail: domain.message, status: domain.status, code: domain.code, requestId, ...(error instanceof ZodError ? { errors: error.issues.map(i => ({ pointer: "/" + i.path.join("/"), message: i.message })) } : {}) }, { status: domain.status, headers: { "Content-Type": "application/problem+json", "Cache-Control": "private, no-store" } });
 }
 export async function requireAdminSession(request: Request) {
   if (!process.env.AUTH_SECRET || !process.env.DATABASE_URL || !process.env.TOTP_ENCRYPTION_KEY) throw new DomainError(401, "UNAUTHENTICATED", "请先完成管理员与安全配置");

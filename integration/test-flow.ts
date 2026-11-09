@@ -21,7 +21,10 @@ const requestKey=()=>({"Idempotency-Key":randomUUID()});
 async function upload(bytes:Buffer,key=randomUUID()) { const body=new FormData();body.append("file",new File([new Uint8Array(bytes)],"integration.png",{type:"image/png"}));return (await client.json("/api/v1/admin/media","POST",body,202,{"Idempotency-Key":key})).value.data; }
 async function main(){
   if(process.env.PERSONAL_SPACE_INTEGRATION!=="true")throw new Error("Isolated integration environment required");
+  await db().loginThrottle.updateMany({data:{attempts:0,windowStart:new Date(Date.now()-16*60000)}});
   await client.login();pass("real Auth.js password + TOTP login and session");
+  // Repeated local runs may leave due events from earlier assertions; drain them first.
+  for(let i=0;i<1000&&await runOutboxEvent();i++){}
   assert.equal((await fetch(base+"/api/v1/admin/contents")).status,401);pass("anonymous administrator API denied");
   const category=(await client.json("/api/v1/admin/categories","POST",{name:`联调知识 ${run}`,slug:`integration-knowledge-${run}`,module:"KNOWLEDGE",parentId:null,sortOrder:0},201,requestKey())).value.data;
   const life=(await client.json("/api/v1/admin/categories","POST",{name:`联调生活 ${run}`,slug:`integration-life-${run}`,module:"LIFE",parentId:null,sortOrder:0},201,requestKey())).value.data;
@@ -56,7 +59,10 @@ async function main(){
   const image=await fetch(base+`/api/v1/contents/${album.state.id}/placements/${photo}/image?variant=DISPLAY`);assert.equal(image.status,200);const displayed=await image.arrayBuffer(), metadata=await sharp(Buffer.from(displayed)).metadata();assert.equal(metadata.exif,undefined);assert.equal(image.headers.get("cache-control"),"private, no-store");pass("published album serves sanitized authorized derivative");
   const original=await client.raw(`/api/v1/admin/media/${state.mediaId}/original`);assert.equal(original.status,200);assert.equal(checksum(Buffer.from(await original.arrayBuffer())),checksum(png));await client.json(`/api/v1/admin/media/${state.mediaId}`,"DELETE",undefined,409,requestKey());pass("private original download and referenced-media deletion protection");
   const settings=await client.json("/api/v1/admin/settings");await client.json("/api/v1/admin/settings","PUT",{siteTitle:"Personal Space 联调",siteIntro:"真实数据联调已接通"},200,{"If-Match":settings.etag!});const homepage=await(await fetch(base)).text();assert.match(homepage,/Personal Space 联调/);pass("settings save reaches real public layout and metadata");
-  const disposable=await upload(png);await runMediaJob();await client.json(`/api/v1/admin/media/${disposable.media.id}`,"DELETE",undefined,204,requestKey());for(let i=0;i<100&&await runOutboxEvent();i++){}await delay(1100);for(let i=0;i<10&&await runMediaGc(1000);i++){}
+  const disposable=await upload(png);await runMediaJob();await client.json(`/api/v1/admin/media/${disposable.media.id}`,"DELETE",undefined,204,requestKey());
+  for(let i=0;i<500;i++){const event=await db().outboxEvent.findFirst({where:{eventType:"MEDIA_DELETED",aggregateId:disposable.media.id}});if(event?.status==="PROCESSED")break;await runOutboxEvent();await delay(20);}
+  await delay(1100);
+  for(let i=0;i<20;i++){await runMediaGc(1000);await delay(50);}
   const deleted=await db().media.findUniqueOrThrow({where:{id:disposable.media.id}});await assert.rejects(objectStore().get(deleted.storageKey,100000));pass("Outbox-to-GC removes only unreferenced deleted S3 objects");
   console.log("Waiting for a fresh MFA window for export creation");const exportProof=await client.proof("EXPORT_CREATE"), exportKey=randomUUID(), exportJob=(await client.json("/api/v1/admin/exports","POST",{includeMedia:true},202,{"Idempotency-Key":exportKey,"X-Reauth-Token":exportProof})).value.data;
   const exportRetry=(await client.json("/api/v1/admin/exports","POST",{includeMedia:true},202,{"Idempotency-Key":exportKey,"X-Reauth-Token":exportProof})).value.data;assert.equal(exportRetry.id,exportJob.id);

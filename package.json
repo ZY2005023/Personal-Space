@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts tests/*.test.tsx",
     "test:smoke": "node scripts/smoke.mjs",
+    "test:browser": "tsx scripts/browser-check.ts",
     "test:auth": "node scripts/check-auth.mjs",
     "test:git-sync": "node --test tests/git-sync.test.mjs",
     "git:sync": "node scripts/sync-git.mjs",

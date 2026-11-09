@@ -5,6 +5,7 @@ import { db } from "./db";
 import { DomainError } from "./domain";
 import { buildContentArchive, type ExportOptions } from "./content-export";
 import { checksum, type ObjectStore } from "./object-store";
+import { log } from "./logger";
 export interface ExportArchiveStore {
   /** Keys must be private and immutable, unique to this attempt. */
   put(exportId: string, attemptToken: string, bytes: Buffer): Promise<string>;
@@ -48,6 +49,7 @@ export async function runExportJob(archives: ExportArchiveStore, config: { maxBy
     });
   } catch (error) {
     const permanent = error instanceof DomainError && error.status < 500;
+    log(permanent ? "warn" : "error", "export.job.failed", { jobId: job.id, attempts: job.attempts, permanent });
     await client.$transaction(async tx => {
       if (!await fence(tx)) return;
       const failed = permanent || job.attempts >= 3;

@@ -6,6 +6,7 @@ import { processImage, imageLimits } from "./image-processing";
 import { MediaJobPayload } from "./media";
 import { checksum, objectStore, type ObjectStore } from "./object-store";
 import { lockRows, type Tx } from "./reference-store";
+import { log } from "./logger";
 type Client = Pick<ReturnType<typeof db>, "$transaction" | "operationJob" | "media">;
 export function claimJobSql(token: string) {
   return Prisma.sql`WITH candidate AS (
@@ -79,6 +80,7 @@ export async function runMediaJob(store: ObjectStore = objectStore(), client: Cl
     });
   } catch (e) {
     const permanent = e instanceof DomainError && e.status < 500;
+    log(permanent ? "warn" : "error", "media.job.failed", { jobId: job.id, attempts: job.attempts, code: permanent ? "IMAGE_REJECTED" : "STORAGE_UNAVAILABLE" });
     await client.$transaction(async tx => {
       await lockRows(tx, "media", [mediaId]);
       if (!await fence(tx, job)) return;

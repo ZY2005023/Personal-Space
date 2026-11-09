@@ -1,0 +1,195 @@
+name: personal-space
+
+x-app: &app
+  image: personal-space:${APP_VERSION:-local}
+  # env_file intentionally omitted here: each service declares only what it needs
+  # so that web/workers never receive POSTGRES_USER / POSTGRES_PASSWORD (owner creds).
+  restart: unless-stopped
+  init: true
+  depends_on:
+    db:
+      condition: service_healthy
+
+# Variables all app containers need (runtime role only, no owner creds)
+x-app-env: &app-env
+  DATABASE_URL: ${DATABASE_URL}
+  AUTH_URL: ${AUTH_URL}
+  AUTH_SECRET: ${AUTH_SECRET}
+  CURSOR_SECRET: ${CURSOR_SECRET}
+  TOTP_ENCRYPTION_KEY: ${TOTP_ENCRYPTION_KEY}
+  S3_BUCKET: ${S3_BUCKET}
+  S3_REGION: ${S3_REGION}
+  S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID}
+  S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY}
+  S3_ENDPOINT: ${S3_ENDPOINT}
+  S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE}
+
+services:
+  db:
+    image: postgres:18
+    restart: unless-stopped
+    env_file: ./.env.production
+    volumes:
+      - pgdata:/var/lib/postgresql
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    # No host port: only the private compose network reaches PostgreSQL.
+
+  web:
+    <<: *app
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    command: ["node", "node_modules/next/dist/bin/next", "start", "--hostname", "0.0.0.0", "--port", "3000"]
+    volumes:
+      - exports:/data/exports:ro
+    environment:
+      <<: *app-env
+      EXPORT_DIRECTORY: /data/exports
+      EXPORT_MAX_BYTES: ${EXPORT_MAX_BYTES}
+      EXPORT_TTL_SECONDS: ${EXPORT_TTL_SECONDS}
+      BACKUP_DIRECTORY: /data/backups
+      BACKUP_MAX_BYTES: ${BACKUP_MAX_BYTES}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+  media-worker:
+    <<: *app
+    command: ["node", "--import", "tsx", "scripts/media-worker.ts"]
+    environment:
+      <<: *app-env
+      WORKER_KIND: media
+
+  outbox-worker:
+    <<: *app
+    command: ["node", "--import", "tsx", "scripts/outbox-worker.ts"]
+    environment:
+      <<: *app-env
+      WORKER_KIND: outbox
+
+  export-worker:
+    <<: *app
+    command: ["node", "--import", "tsx", "scripts/export-worker.ts"]
+    volumes:
+      - exports:/data/exports
+    environment:
+      <<: *app-env
+      EXPORT_DIRECTORY: /data/exports
+      EXPORT_MAX_BYTES: ${EXPORT_MAX_BYTES}
+      EXPORT_TTL_SECONDS: ${EXPORT_TTL_SECONDS}
+
+  backup-worker:
+    <<: *app
+    command: ["node", "--import", "tsx", "scripts/backup-worker.ts"]
+    volumes:
+      - backups:/data/backups
+      - ../secrets/restic-password:/run/secrets/restic_password:ro
+    environment:
+      <<: *app-env
+      BACKUP_DIRECTORY: /data/backups
+      BACKUP_MAX_BYTES: ${BACKUP_MAX_BYTES}
+      BACKUP_TIMEOUT_SECONDS: ${BACKUP_TIMEOUT_SECONDS}
+      BACKUP_AUTOMATIC: ${BACKUP_AUTOMATIC}
+      BACKUP_TIME: ${BACKUP_TIME}
+      PG_DUMP_PATH: ${PG_DUMP_PATH}
+      RESTIC_PATH: ${RESTIC_PATH}
+      RESTIC_REPOSITORY: ${RESTIC_REPOSITORY}
+      RESTIC_PASSWORD_FILE: /run/secrets/restic_password
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+
+  media-gc-worker:
+    <<: *app
+    profiles: ["gc"]
+    command: ["node", "--import", "tsx", "scripts/media-gc-worker.ts"]
+    environment:
+      <<: *app-env
+      MEDIA_GC_GRACE_SECONDS: ${MEDIA_GC_GRACE_SECONDS}
+
+  migrate:
+    image: personal-space:${APP_VERSION:-local}
+    restart: "no"
+    init: true
+    profiles: ["tools"]
+    command: ["sh", "deploy/migrate.sh"]
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      MIGRATION_DATABASE_URL: ${MIGRATION_DATABASE_URL}
+
+  admin-init:
+    image: personal-space:${APP_VERSION:-local}
+    restart: "no"
+    init: true
+    profiles: ["tools"]
+    stdin_open: true
+    tty: true
+    command: ["npm", "run", "admin:init"]
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      <<: *app-env
+
+  restore-drill:
+    image: personal-space:${APP_VERSION:-local}
+    restart: "no"
+    init: true
+    profiles: ["tools"]
+    command: ["node", "--import", "tsx", "scripts/restore-drill.ts", "--help"]
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - backups:/data/backups
+      - ../secrets/restic-password:/run/secrets/restic_password:ro
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      S3_BUCKET: ${S3_BUCKET}
+      RESTORE_DATABASE_URL: ${RESTORE_DATABASE_URL}
+      RESTORE_S3_BUCKET: ${RESTORE_S3_BUCKET}
+      RESTORE_S3_REGION: ${RESTORE_S3_REGION}
+      RESTORE_S3_ACCESS_KEY_ID: ${RESTORE_S3_ACCESS_KEY_ID}
+      RESTORE_S3_SECRET_ACCESS_KEY: ${RESTORE_S3_SECRET_ACCESS_KEY}
+      RESTORE_S3_ENDPOINT: ${RESTORE_S3_ENDPOINT}
+      RESTORE_S3_FORCE_PATH_STYLE: ${RESTORE_S3_FORCE_PATH_STYLE}
+      BACKUP_DIRECTORY: /data/backups
+      BACKUP_MAX_BYTES: ${BACKUP_MAX_BYTES}
+      BACKUP_TIMEOUT_SECONDS: ${BACKUP_TIMEOUT_SECONDS}
+      RESTIC_PATH: ${RESTIC_PATH}
+      RESTIC_REPOSITORY: ${RESTIC_REPOSITORY}
+      RESTIC_PASSWORD_FILE: /run/secrets/restic_password
+      PG_RESTORE_PATH: ${PG_RESTORE_PATH}
+
+  caddy:
+    image: caddy:2.10
+    restart: unless-stopped
+    depends_on:
+      web:
+        condition: service_healthy
+    environment:
+      SITE_DOMAIN: ${SITE_DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  pgdata:
+  exports:
+  backups:
+  caddy_data:
+  caddy_config:

@@ -112,6 +112,15 @@ Outbox新增CONTENT_STATE_CHANGED消费者，以锁内当前发布状态而非�
 
 238项测试、78项本地HTTP、类型/生产构建、Prisma静态与契约校验通过；没有真实数据库/存储/工具执行或迁移。主要源码闭环不代表V1.0验收通过。后续需变更原建库/迁移限制，进入隔离联调。见V1-MAIN-FEATURES.md、OPERATIONS.md及N18记录。
 
+## TECH-020：N20 验收补齐与上线准备（2026-11-06）
+
+- 公开详情不再使用段级`loading.tsx`，避免流式响应在调用notFound后仍返回200；列表/搜索保留各自loading骨架，详情返回真实404。
+- 编辑器增加最后保存时间、发布前媒体就绪检查与同源导航未保存提示；后台列表增加分类/标签筛选；移动菜单增加遮罩、ESC、焦点圈定/回归。
+- 相册新增支持多选并按可信拍摄时间升序、缺失/不可信按上传时间稳定追加；新增`photo-order`单元测试。
+- 新增`/health/live`、`/health/ready`与结构化请求/Worker日志；不改变业务API、认证语义、模型或迁移。
+- 新增生产镜像、Compose、Caddy、数据库角色/迁移授权、环境模板与`docs/DEPLOYMENT.md`；未创建任何生产资源。
+- 新增`integration/test-acceptance.ts`（23项真实检查）与`reset-restore`。当前240项单元/替身、56项原有真实检查、23项新增检查、32个Chrome无头页面/视口组合通过。48条中42条本机真实通过、6条部分通过；未达到正式上线条件。
+
 ## TECH-019：真实本机第一版联调
 
 用户授权后初始化隔离PG18、私有HTTPS S3测试服务及测试身份，实际应用initial/constraints/constraint_precision三份迁移。30模型及高级约束/角色隔离有真实负例证据；媒体预约状态统一为PROCESSING。进程执行器支持受配置控制的Node工具脚本，在Windows通过Docker运行pg_dump/pg_restore/restic，无shell拼接。Node使用可信本机CA，未关闭TLS校验。实际导出、备份和恢复及56项服务检查通过，冻结原稿不改写。详情见N19验证记录。

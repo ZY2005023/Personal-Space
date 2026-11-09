@@ -13,7 +13,8 @@ export async function executeRestoreDrill(directory: string) {
   const target = process.env.RESTORE_DATABASE_URL, source = process.env.DATABASE_URL;
   if (!target || !source || databaseIdentity(target) === databaseIdentity(source)) throw new DomainError(422, "INVALID_INPUT", "恢复演练必须使用独立的现有空数据库");
   const bucket = process.env.RESTORE_S3_BUCKET, endpoint = process.env.RESTORE_S3_ENDPOINT, region = process.env.RESTORE_S3_REGION, accessKeyId = process.env.RESTORE_S3_ACCESS_KEY_ID, secretAccessKey = process.env.RESTORE_S3_SECRET_ACCESS_KEY;
-  if (!bucket || !region || !accessKeyId || !secretAccessKey || bucket === process.env.S3_BUCKET && (endpoint || "") === (process.env.S3_ENDPOINT || "")) throw new DomainError(422, "INVALID_INPUT", "恢复演练必须配置独立的现有私有存储桶");
+  if (!bucket || !region || !accessKeyId || !secretAccessKey || (process.env.S3_BUCKET && bucket === process.env.S3_BUCKET)) throw new DomainError(422, "INVALID_INPUT", "恢复演练必须配置独立的现有私有存储桶");
+  if (!process.env.S3_BUCKET) throw new DomainError(503, "SERVICE_UNAVAILABLE", "S3_BUCKET 未配置，无法验证演练桶与生产桶的隔离");
   if (endpoint && new URL(endpoint).protocol !== "https:") throw new Error("Restore storage requires HTTPS");
   const maxBytes = Number(process.env.BACKUP_MAX_BYTES || 10 * 1024 ** 3), bundle = await verifyBackupBundle(directory, maxBytes), main = db();
   const backup = await main.backupRun.findUnique({ where: { id: bundle.manifest.backupId } }); if (!backup || backup.checksum !== bundle.checksum) throw new Error("Backup manifest does not match its record");

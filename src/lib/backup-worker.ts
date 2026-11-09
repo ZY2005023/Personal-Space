@@ -6,6 +6,7 @@ import { db } from "./db";
 import { DomainError } from "./domain";
 import { buildBackupBundle, verifyBackupBundle, type BackupTools, type BackupBundleConfig } from "./backup-pipeline";
 import type { ObjectStore } from "./object-store";
+import { log } from "./logger";
 const Payload = z.strictObject({ adminId: z.uuid(), backupId: z.uuid(), backupType: z.enum(["DAILY", "WEEKLY", "MONTHLY", "YEARLY", "MANUAL"]) });
 type Client = Pick<ReturnType<typeof db>, "$transaction">;
 export function claimBackupSql(token: string) { return Prisma.sql`WITH candidate AS (
@@ -30,6 +31,7 @@ export async function runBackupJob(config: BackupBundleConfig, tools: BackupTool
     const snapshotId = await tools.offsite(bundle.directory, backupId);
     await client.$transaction(async tx => { if (!await fence(tx)) return; await tx.backupCopy.upsert({ where: { backupRunId_copyType_locationKey: { backupRunId: backupId!, copyType: "OFFSITE", locationKey: `restic:${snapshotId}` } }, create: { backupRunId: backupId!, copyType: "OFFSITE", locationKey: `restic:${snapshotId}`, status: "SUCCEEDED", checksum: bundle.checksum, verifiedAt: new Date() }, update: { status: "SUCCEEDED", verifiedAt: new Date() } }); await tx.backupRun.update({ where: { id: backupId }, data: { status: "SUCCEEDED", offsiteStatus: "SUCCEEDED", completedAt: new Date(), errorSummary: null } }); await tx.operationJob.update({ where: { id: job.id }, data: { status: "SUCCEEDED", result: { backupId }, errorCode: null, completedAt: new Date(), leaseToken: null, leaseUntil: null, nextAttemptAt: null } }); });
   } catch (error) {
+    log(localReady ? "warn" : "error", "backup.job.failed", { jobId: job.id, attempts: job.attempts, stage: localReady ? "OFFSITE" : "LOCAL" });
     await client.$transaction(async tx => { if (!await fence(tx)) return; const failed = error instanceof DomainError && error.status < 500 || job.attempts >= 3; if (backupId) await tx.backupRun.updateMany({ where: { id: backupId, jobId: job.id }, data: { status: "FAILED", ...(localReady ? { offsiteStatus: "FAILED" } : { localStatus: "FAILED", integrityStatus: "FAILED" }), errorSummary: localReady ? "OFFSITE_UNAVAILABLE" : "LOCAL_BACKUP_UNAVAILABLE", completedAt: new Date() } }); await tx.operationJob.update({ where: { id: job.id }, data: { status: failed ? "FAILED" : "PENDING", errorCode: localReady ? "OFFSITE_UNAVAILABLE" : "LOCAL_BACKUP_UNAVAILABLE", completedAt: failed ? new Date() : null, nextAttemptAt: failed ? null : new Date(Date.now() + job.attempts * 30000), leaseToken: null, leaseUntil: null } }); });
   } finally { clearInterval(heartbeat); await renewal; }
   return true;

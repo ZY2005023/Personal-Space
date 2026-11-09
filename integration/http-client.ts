@@ -11,7 +11,7 @@ export class AuthClient {
   private cookies = new Map<string,string>(); csrf = ""; adminId = "";
   async raw(path: string, options: RequestInit = {}) {
     const headers = new Headers(options.headers); headers.set("Cookie",[...this.cookies].map(([key,value])=>`${key}=${value}`).join("; "));
-    if (options.method && options.method !== "GET") { headers.set("Origin",base); if(this.csrf)headers.set("X-CSRF-Token",this.csrf); }
+    if (options.method && options.method !== "GET") { if (!headers.has("Origin")) headers.set("Origin",base); if(this.csrf)headers.set("X-CSRF-Token",this.csrf); }
     const response=await fetch(base+path,{...options,headers,redirect:"manual"});
     for(const cookie of response.headers.getSetCookie()){const [pair]=cookie.split(";");const n=pair.indexOf("=");if(n>0){const key=pair.slice(0,n),value=pair.slice(n+1);if(value)this.cookies.set(key,value);else this.cookies.delete(key);}}
     return response;

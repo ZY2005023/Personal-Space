@@ -18,9 +18,10 @@ import { exportRuntime } from "@/lib/export-artifacts";
 import { tokenHash } from "@/lib/auth-policy";
 import { createBackup } from "@/lib/backup-store";
 import { backupRuntime } from "@/lib/backup-runtime";
+import { logRequest } from "@/lib/logger";
 export const dynamic = "force-dynamic";
 type Context = { params: Promise<{ segments: string[] }> };
-async function route(request: Request, context: Context) {
+async function handle(request: Request, context: Context, requestId: string) {
   try {
     const session = await requireAdminSession(request), adminId = session.user.id;
     const { segments: s } = await context.params; const method = request.method;
@@ -150,6 +151,18 @@ async function route(request: Request, context: Context) {
       return ok(data, revisionId ? 200 : 201);
     }
     throw new DomainError(404, "NOT_FOUND", "接口不存在");
-  } catch (error) { return problem(error); }
+  } catch (error) { return problem(error, requestId); }
+}
+async function route(request: Request, context: Context) {
+  const startedAt = Date.now(), requestId = crypto.randomUUID();
+  try {
+    const response = await handle(request, context, requestId);
+    logRequest(request, response.status, startedAt, requestId);
+    return response;
+  } catch (error) {
+    const response = problem(error, requestId);
+    logRequest(request, response.status, startedAt, requestId, error instanceof DomainError ? error.code : "INTERNAL_ERROR");
+    return response;
+  }
 }
 export const GET = route; export const POST = route; export const PUT = route; export const DELETE = route;

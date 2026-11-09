@@ -1,0 +1,3 @@
+export function PublicLoading() {
+  return <main id="main" className="wrap list-page" aria-busy="true"><p className="eyebrow">正在读取内容…</p><div className="skeleton wide" /><div className="skeleton" /><div className="skeleton" /></main>;
+}
