@@ -27,8 +27,9 @@ export async function GET() {
         (SELECT count(*) FROM _prisma_migrations WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL) AS migrations,
         (SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN
           ('admin_users','contents','content_drafts','content_revisions','content_publications','content_routes',
-           'media','content_search_documents','operation_jobs','outbox_events','backup_runs')) AS tables`;
-    const ready = Number(row?.trgm) >= 1 && Number(row?.migrations) >= 3 && Number(row?.tables) === 11;
+           'media','content_search_documents','operation_jobs','outbox_events','backup_runs',
+           'interest_topics','interest_topic_items','ai_summary_usage')) AS tables`;
+    const ready = Number(row?.trgm) >= 1 && Number(row?.migrations) >= 4 && Number(row?.tables) === 14;
     if (!ready) {
       log("error", "health.ready", { ready: false, issue: "schema", trgm: Number(row?.trgm), migrations: Number(row?.migrations), tables: Number(row?.tables) });
       return Response.json({ status: "unavailable" }, { status: 503, headers: { "Cache-Control": "no-store" } });

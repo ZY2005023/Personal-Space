@@ -49,6 +49,9 @@ services:
       - exports:/data/exports:ro
     environment:
       <<: *app-env
+      AI_SUMMARY_ENDPOINT: ${AI_SUMMARY_ENDPOINT:-}
+      AI_SUMMARY_TOKEN: ${AI_SUMMARY_TOKEN:-}
+      AI_SUMMARY_DAILY_LIMIT: ${AI_SUMMARY_DAILY_LIMIT:-20}
       EXPORT_DIRECTORY: /data/exports
       EXPORT_MAX_BYTES: ${EXPORT_MAX_BYTES}
       EXPORT_TTL_SECONDS: ${EXPORT_TTL_SECONDS}

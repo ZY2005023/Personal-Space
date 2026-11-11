@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 function forbiddenPath(path) {
   return /(?:^|\/)\.env(?:\.[^/]+)?$/.test(path) && !/(?:^|\/)\.env(?:\.\w+)?\.example$/.test(path)
-    || /(?:^|\/)(?:node_modules|\.next|\.secrets|work|backups|uploads|media-originals|storage|data)(?:\/|$)/.test(path)
+    || /(?:^|\/)(?:node_modules|\.next|\.secrets|secrets|work|backups|uploads|media-originals|storage|data)(?:\/|$)/.test(path)
     || /\.(?:pem|key|p12|pfx|dump|sqlite3?|db)$/i.test(path);
 }
 const rules = [
@@ -20,6 +20,7 @@ function inspect(path, data) {
   return rules.filter(([, pattern]) => pattern.test(text)).map(([name]) => name);
 }
 if (process.argv.includes("--self-test")) {
+  assert.deepEqual(inspect("secrets/restic-password", Buffer.from("placeholder")), ["private-or-generated-path"]);
   assert.deepEqual(inspect(".env.local", Buffer.from("")), ["private-or-generated-path"]);
   assert.deepEqual(inspect(".env.example", Buffer.from("AUTH_SECRET=\n")), []);
   assert.deepEqual(inspect(".env.production.example", Buffer.from("DATABASE_URL=\n")), []);

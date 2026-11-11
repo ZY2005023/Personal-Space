@@ -61,48 +61,45 @@ try {
   const navigateIn = async (sessionId: string, url: string) => { await send("Page.navigate", { url }, sessionId); await delay(1200); };
   const navigate = async (url: string) => navigateIn(session, url);
 
-  const list = await client.json("/api/v1/admin/contents?limit=1");
-  const contentId = list.value.data[0]?.state.id as string | undefined;
-  if (!contentId) throw new Error("No existing content found; browser check requires at least one content item to test the editor. Run integration tests first to seed data.");
-  // Snapshot the existing draft so editor scenarios can restore it instead of leaving a test title behind.
-  const draftSnapshot = await client.json(`/api/v1/admin/contents/${contentId}/draft`);
-  const originalTitle = draftSnapshot.value.payload.title as string;
-  const originalBody = draftSnapshot.value.payload.bodyMarkdown as string;
-  const originalEtag = draftSnapshot.etag as string;
-  const publicList = await (await fetch(base + "/api/v1/contents?limit=1")).json();
+  const fixture = await client.json("/api/v1/admin/contents", "POST", { type: "ARTICLE", module: "KNOWLEDGE" }, 201, { "Idempotency-Key": crypto.randomUUID() });
+  const contentId = fixture.value.data.state.id as string;
+  const publicList = await (await fetch(base + "/api/v1/contents?type=ARTICLE&limit=1")).json();
   const publicPath = publicList.data[0]?.canonicalPath as string | undefined;
   const albums = await (await fetch(base + "/api/v1/contents?type=ALBUM&limit=1")).json();
   const albumPath = albums.data[0]?.canonicalPath as string | undefined;
 
+  if (!publicPath || !albumPath) throw new Error("Browser checks require a published article and album. Seed the isolated environment first.");
+
   const pages = [
-    { name: "home", url: "/" },
-    { name: "life", url: "/life" },
-    { name: "knowledge", url: "/knowledge" },
-    { name: "albums", url: "/albums" },
-    { name: "search", url: "/search?q=" + encodeURIComponent("联调") },
-    ...(publicPath ? [{ name: "reading", url: publicPath }] : []),
-    ...(albumPath ? [{ name: "album-detail", url: albumPath }] : []),
-    { name: "admin-home", url: "/admin" },
-    { name: "admin-contents", url: "/admin/contents" },
-    ...(contentId ? [{ name: "admin-editor", url: `/admin/contents/${contentId}` }] : []),
-    { name: "admin-media", url: "/admin/media" },
-    { name: "admin-taxonomy", url: "/admin/taxonomy" },
-    { name: "admin-trash", url: "/admin/trash" },
-    { name: "admin-backups", url: "/admin/backups" },
-    { name: "admin-security", url: "/admin/security" },
-    { name: "admin-audit", url: "/admin/audit" },
+    { name: "home", url: "/", selector: '.hero' },
+    { name: "life", url: "/life", selector: '.list-page .browse-filters' },
+    { name: "knowledge", url: "/knowledge", selector: '.list-page .browse-filters' },
+    { name: "albums", url: "/albums", selector: '.list-page .browse-filters' },
+    { name: "search", url: "/search?q=" + encodeURIComponent("联调"), selector: '#browse-q' },
+    ...(publicPath ? [{ name: "reading", url: publicPath, selector: '.reading-page .prose' }] : []),
+    ...(albumPath ? [{ name: "album-detail", url: albumPath, selector: '.album-page .album-masonry' }] : []),
+    { name: "admin-home", url: "/admin", selector: '.admin-grid' },
+    { name: "admin-contents", url: "/admin/contents", selector: '.admin-filters' },
+    ...(contentId ? [{ name: "admin-editor", url: `/admin/contents/${contentId}`, selector: '#content-title' }] : []),
+    { name: "admin-media", url: "/admin/media", selector: '.admin-main input[type=file]' },
+    { name: "admin-taxonomy", url: "/admin/taxonomy", selector: '.taxonomy-form' },
+    { name: "admin-trash", url: "/admin/trash", selector: '.admin-filters' },
+    { name: "admin-backups", url: "/admin/backups", selector: '.operation-grid' },
+    { name: "admin-security", url: "/admin/security", selector: '.security-page' },
+    { name: "admin-audit", url: "/admin/audit", selector: '#audit-action' },
   ];
 
   await mkdir(output, { recursive: true });
   for (const width of [1440, 390]) {
     await send("Emulation.setDeviceMetricsOverride", { width, height: width === 390 ? 844 : 900, deviceScaleFactor: 1, mobile: width < 500, screenWidth: width, screenHeight: width === 390 ? 844 : 900 }, session);
     for (const page of pages) {
+      const response = await client.raw(page.url, { redirect: "manual" });
+      if (!response.ok) throw new Error('Page "' + page.name + '" returned HTTP ' + response.status);
       await navigate(base + page.url);
-      const actualPath = await evaluate(`location.pathname + location.search`);
-      // Detect error pages: login redirect or Next.js error boundary (h2 containing error text).
-      if (actualPath.startsWith("/login")) throw new Error(`Page "${page.name}" redirected to login; session may have expired`);
-      const errorHeading = await evaluate(`document.querySelector('h2')?.textContent?.trim() ?? ""`);
-      if (/出错了|Something went wrong|500|Application error/i.test(String(errorHeading))) throw new Error(`Page "${page.name}" rendered an error page: "${errorHeading}"`);
+      const actualPath = await evaluate("location.pathname + location.search");
+      if (actualPath !== page.url) throw new Error('Page "' + page.name + '" reached ' + actualPath);
+      const rendered = await evaluate('!!document.querySelector(' + JSON.stringify(page.selector) + ')');
+      if (!rendered) throw new Error('Page "' + page.name + '" did not render its expected content');
       const metrics = await evaluate(`(() => {
         const width = document.documentElement.clientWidth;
         const overflow = Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) - width;
@@ -154,6 +151,16 @@ try {
     await send("Target.closeTarget", { targetId: targetB.targetId });
 
     await navigateIn(session, editorUrl);
+    const recoveryText = "back navigation " + Date.now();
+    await setTitle(session, recoveryText);
+    await evaluateIn(session, 'document.querySelector(\'.admin-sidebar a[href="/admin/contents"]\').click()');
+    await delay(1000);
+    const leftEditor = await evaluateIn(session, "location.pathname") === "/admin/contents";
+    await evaluateIn(session, "history.back()");
+    await delay(1000);
+    const restoredTitle = await evaluateIn(session, "document.querySelector('#content-title')?.value");
+    scenarios.push({ name: "back-navigation-recovers-draft", passed: leftEditor && restoredTitle === recoveryText, detail: "Checks the restored title after returning to the editor." });
+
     const expiryText = `expiry ${Date.now()}`;
     await setTitle(session, expiryText); await delay(150);
     await db().adminUser.update({ where: { id: client.adminId }, data: { sessionVersion: { increment: 1 } } });
@@ -164,12 +171,7 @@ try {
     const expired = expiryValue === expiryText && (expiryBody.includes("会话已失效") || expiryBody.includes("请重新登录") || expiryBody.includes("验证"));
     scenarios.push({ name: "session-expiry-keeps-input", passed: !!expired, detail: `inputPreserved=${expiryValue === expiryText} feedback=${expiryBody.includes("会话已失效") || expiryBody.includes("请重新登录") || expiryBody.includes("验证")}` });
 
-    // Restore the draft to its original state so the check does not leave test titles behind.
-    await client.login();
-    const currentDraft = await client.json(`/api/v1/admin/contents/${contentId}/draft`);
-    await client.json(`/api/v1/admin/contents/${contentId}/draft`, "PUT",
-      { ...currentDraft.value.payload, title: originalTitle, bodyMarkdown: originalBody },
-      200, { "If-Match": currentDraft.etag ?? originalEtag });
+
   }
 
   const failedScenarios = scenarios.filter(scenario => !scenario.passed);

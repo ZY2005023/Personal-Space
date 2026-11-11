@@ -23,6 +23,7 @@ export function Nav({ siteTitle = "Personal Space" }: { siteTitle?: string }) {
           <Link href="/life">生活</Link>
           <Link href="/knowledge">知识</Link>
           <Link href="/albums">相册</Link>
+          <Link href="/interests">兴趣</Link>
           <Link href="/search">
             搜索 <span aria-hidden>⌕</span>
           </Link>
@@ -34,6 +35,7 @@ export function Nav({ siteTitle = "Personal Space" }: { siteTitle?: string }) {
             <Link href="/life">生活</Link>
             <Link href="/knowledge">知识</Link>
             <Link href="/albums">相册</Link>
+          <Link href="/interests">兴趣</Link>
             <Link href="/search">搜索</Link>
           </nav>
         </details>

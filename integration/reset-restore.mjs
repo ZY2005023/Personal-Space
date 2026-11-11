@@ -15,32 +15,32 @@ if (targetUrl.hostname !== "127.0.0.1" || targetUrl.port !== "15432" || targetUr
   throw new Error("Refusing to reset a database that is not the isolated restore target");
 }
 
-const client = new Client({ connectionString: target });
-await client.connect();
-try {
-  await client.query("DROP SCHEMA IF EXISTS public CASCADE");
-  await client.query("CREATE SCHEMA public");
-  const empty = await client.query("SELECT count(*)::int AS count FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'");
-  if (empty.rows[0].count !== 0) throw new Error("Restore database did not become empty");
-} finally {
-  await client.end();
-}
-
 const bucket = process.env.RESTORE_S3_BUCKET;
 const endpoint = process.env.RESTORE_S3_ENDPOINT;
 const region = process.env.RESTORE_S3_REGION;
 const accessKeyId = process.env.RESTORE_S3_ACCESS_KEY_ID;
 const secretAccessKey = process.env.RESTORE_S3_SECRET_ACCESS_KEY;
 if (!bucket || !region || !accessKeyId || !secretAccessKey) throw new Error("Restore storage is not configured");
-if (endpoint && new URL(endpoint).protocol !== "https:") throw new Error("Restore storage must use HTTPS");
+if (!endpoint || new URL(endpoint).origin !== "https://127.0.0.1:19000" || bucket !== "ps-restore") {
+  throw new Error("Refusing to clear storage outside the isolated local restore bucket");
+}
+if (!process.env.S3_BUCKET || bucket === process.env.S3_BUCKET) {
+  throw new Error("Restore bucket must differ from the configured source bucket");
+}
+const sourceUrl = new URL(source);
+if (sourceUrl.hostname === targetUrl.hostname && (sourceUrl.port || "5432") === targetUrl.port && decodeURIComponent(sourceUrl.pathname) === targetUrl.pathname) {
+  throw new Error("Restore database must differ from the source database");
+}
 
-// Guard: refuse to clear the production bucket or any bucket outside the test convention.
-const productionBucket = process.env.S3_BUCKET;
-if (!productionBucket) throw new Error("S3_BUCKET (production bucket name) is not set; cannot verify restore bucket isolation");
-if (bucket === productionBucket) throw new Error("RESTORE_S3_BUCKET must differ from the production S3_BUCKET; refusing to clear production storage");
-// Bucket name must match the isolated test convention so a misconfigured RESTORE_S3_BUCKET
-// pointing at an unrelated bucket still fails fast instead of deleting foreign data.
-if (!/^ps-restore(-[\w-]+)?$/.test(bucket)) throw new Error(`RESTORE_S3_BUCKET "${bucket}" does not match the isolated test bucket naming convention (ps-restore*); refusing to clear`);
+const client = new Client({ connectionString: target });
+await client.connect();
+try {
+  await client.query("BEGIN; DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public; COMMIT");
+  const empty = await client.query("SELECT count(*)::int AS count FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'");
+  if (empty.rows[0].count !== 0) throw new Error("Restore database did not become empty");
+} finally {
+  await client.end();
+}
 
 const s3 = new S3Client({ region, endpoint: endpoint || undefined, forcePathStyle: process.env.RESTORE_S3_FORCE_PATH_STYLE === "true", credentials: { accessKeyId, secretAccessKey } });
 let removed = 0, token;

@@ -4,7 +4,7 @@ import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
 import { useEffect, useRef } from "react";
 import { MenuBackdrop, useMenuDialog } from "./menu-dialog";
-const links = [["/admin", "概览"], ["/admin/contents", "内容管理"], ["/admin/media", "媒体库"], ["/admin/taxonomy", "分类与标签"], ["/admin/trash", "回收站"], ["/admin/backups", "导出与备份"], ["/admin/security", "安全与设置"], ["/admin/audit", "审计记录"]];
+const links = [["/admin", "概览"], ["/admin/contents", "内容管理"], ["/admin/media", "媒体库"], ["/admin/taxonomy", "分类与标签"], ["/admin/topics", "兴趣专题"], ["/admin/trash", "回收站"], ["/admin/backups", "导出与备份"], ["/admin/security", "安全与设置"], ["/admin/audit", "审计记录"]];
 export function AdminShell({ children }: { children: React.ReactNode }) {
   const menu = useRef<HTMLDetailsElement>(null);
   const path = usePathname(); const current = [...links].reverse().find(([url]) => path === url || path.startsWith(url + "/"))?.[1] || "管理空间";

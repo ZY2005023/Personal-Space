@@ -6,6 +6,7 @@ import type { PayloadInput, Revision, viewAdmin } from "@/lib/domain";
 import { Markdown } from "./markdown";
 import { api, apiResponse, ApiError } from "./admin-client";
 import { loadCatalog, type TaxonomyRow } from "./taxonomy-manager";
+import { SummarySuggestion } from "./summary-suggestion";
 import { MediaPlacements } from "./media-placements";
 import type { MediaItem } from "./media-manager";
 type MediaCheck = { id: string; name: string; status: string };
@@ -30,44 +31,40 @@ export function Editor({ initial }: { initial: Model }) {
   const savedTime = new Date(model.draft.lastSavedAt).toLocaleString("zh-CN", { timeZone: "Asia/Hong_Kong", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false });
   const mediaReady = mediaCheck?.every(item => item.status === "READY") ?? false;
   const mediaSummary = !mediaCheck ? "正在检查…" : mediaCheck.length === 0 ? "无图片引用" : mediaReady ? `全部 ${mediaCheck.length} 项已就绪` : `${mediaCheck.filter(item => item.status !== "READY").length} 项尚未就绪`;
-  useEffect(() => { const block = (e: BeforeUnloadEvent) => { if (dirty) e.preventDefault(); }; addEventListener("beforeunload", block); return () => removeEventListener("beforeunload", block); }, [dirty]);
+  const recoveryKey = "personal-space:unsaved:" + initial.state.id;
+  const draftMatch = useRef(initial.draft.etag);
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(recoveryKey);
+      if (!raw) return;
+      const saved = JSON.parse(raw) as { payload: PayloadInput; etag: string };
+      if (!saved.payload || typeof saved.etag !== "string") return;
+      draftMatch.current = saved.etag;
+      setPayload(saved.payload);
+      setDirty(true);
+      setMessage("已恢复此标签页未保存的草稿。");
+    } catch { /* Session storage may be unavailable. */ }
+  }, [recoveryKey]);
+  function edit(next: PayloadInput) {
+    setPayload(next);
+    setDirty(true);
+    setMessage("");
+    try { sessionStorage.setItem(recoveryKey, JSON.stringify({ payload: next, etag: draftMatch.current })); }
+    catch { /* Keep the input in the editor if storage is unavailable. */ }
+  }
   useEffect(() => {
     if (!dirty) return;
-    // Sentinel technique: push an extra history entry so the first Back press
-    // lands on the sentinel (same URL) instead of leaving the page. popstate
-    // fires after the browser has already swapped to the previous URL, so we
-    // cannot truly "cancel" it; the sentinel gives us a buffer entry to detect
-    // the intent and re-anchor the user on the editor if they decline.
-    window.history.pushState({ sentinel: true }, "", location.href);
-    // Also guard same-origin link clicks (Next.js client navigation does not
-    // fire beforeunload).
-    const guard = (event: MouseEvent) => {
-      const link = (event.target as HTMLElement | null)?.closest?.("a[href]") as HTMLAnchorElement | null;
-      if (!link || link.target === "_blank" || link.hasAttribute("download")) return;
-      const target = new URL(link.href, location.href);
-      if (target.origin !== location.origin || target.href === location.href) return;
-      if (!confirm("当前内容有未保存的更改，离开后这些输入会丢失。确认离开？")) event.preventDefault();
-    };
-    document.addEventListener("click", guard, true);
-    const guardPop = () => {
-      if (!dirty) return;
-      if (!confirm("当前内容有未保存的更改，离开后这些输入会丢失。确认离开？")) {
-        // User declined: re-push the sentinel so the next Back press is caught too.
-        window.history.pushState({ sentinel: true }, "", location.href);
-      }
-    };
-    addEventListener("popstate", guardPop);
-    return () => {
-      document.removeEventListener("click", guard, true);
-      removeEventListener("popstate", guardPop);
-      // Remove the sentinel entry we added, but only if it is still the active
-      // entry (the user did not navigate away). Otherwise back() would jump to
-      // an unrelated page.
-      if (window.history.state?.sentinel) window.history.back();
-    };
+    const block = (event: BeforeUnloadEvent) => event.preventDefault();
+    addEventListener("beforeunload", block);
+    return () => removeEventListener("beforeunload", block);
   }, [dirty]);
-  function update<K extends keyof PayloadInput>(key: K, value: PayloadInput[K]) { setPayload(p => ({ ...p, [key]: value })); setDirty(true); setMessage(""); }
-  function accept(next: Model) { setModel(next); setPayload(inputPayload(next)); setDirty(false); }
+  function update<K extends keyof PayloadInput>(key: K, value: PayloadInput[K]) { edit({ ...payload, [key]: value }); }
+  function clearRecoveredDraft(etag: string) {
+    draftMatch.current = etag;
+    try { sessionStorage.removeItem(recoveryKey); } catch { /* Storage is optional. */ }
+    setDirty(false);
+  }
+  function accept(next: Model) { setModel(next); setPayload(inputPayload(next)); clearRecoveredDraft(next.draft.etag); }
   async function failure(e: unknown) {
     setError((e as Error).message || "网络中断，当前输入已保留。可用原请求重试。");
     if (e instanceof ApiError && e.status === 412) {
@@ -76,7 +73,7 @@ export function Editor({ initial }: { initial: Model }) {
   }
   async function save() {
     if (busy) return; setBusy(true); setError(""); setMessage("");
-    try { const draft = await api<Model["draft"]>(base + "/draft", "PUT", payload, { "If-Match": model.draft.etag }); setModel(m => ({ ...m, draft })); setDirty(false); setMessage("草稿已保存，线上内容未改变。"); }
+    try { const draft = await api<Model["draft"]>(base + "/draft", "PUT", payload, { "If-Match": draftMatch.current }); setModel(m => ({ ...m, draft })); clearRecoveredDraft(draft.etag); setMessage("草稿已保存，线上内容未改变。"); }
     catch(e) { await failure(e); } finally { setBusy(false); }
   }
   async function mutation<T>(suffix: string, match: string, body?: unknown) {
@@ -131,8 +128,8 @@ export function Editor({ initial }: { initial: Model }) {
     {error && <div className="notice error" role="alert">{error}{error.includes("登录") && <> <Link href="/login" target="_blank">在新窗口登录</Link></>}</div>}{message && <div className="notice" role="status">{message}{model.state.effectiveVisibility === "PUBLIC" && !dirty && <Link style={{ marginLeft: 14 }} href={model.draft.payload.desiredPath} target="_blank">查看公开版本 ↗</Link>}</div>}
     <div className="editor-tabs" role="tablist" aria-label="编辑视图"><button role="tab" aria-selected={tab === "edit"} className={tab === "edit" ? "active" : ""} onClick={() => setTab("edit")}>编辑</button><button role="tab" aria-selected={tab === "preview"} className={tab === "preview" ? "active" : ""} onClick={() => setTab("preview")}>预览</button></div><div className="editor-grid"><section className={`editor-pane ${tab !== "edit" ? "mobile-hidden" : ""}`}><div className="pane-title">Markdown 编辑</div><label className="sr-only" htmlFor="markdown">Markdown 正文</label><textarea id="markdown" className="editor-textarea" value={payload.bodyMarkdown} placeholder="从一段文字开始…" onChange={e => update("bodyMarkdown", e.target.value)} disabled={busy}/></section><section className={`editor-pane ${tab !== "preview" ? "mobile-hidden" : ""}`}><div className="pane-title">实时预览 · 未发布的草稿</div><div className="editor-preview"><Markdown body={payload.bodyMarkdown || "写下内容后，在这里预览。"} media={{ admin: true, placements: payload.placements }}/>{payload.type === "ALBUM" && <div className="media-grid">{payload.placements.filter(p => p.role === "ALBUM_PHOTO").map(p => <figure key={p.placementId}><img src={`/api/v1/admin/media/${p.mediaId}/image?variant=DISPLAY`} alt={p.altText} loading="lazy" style={{ maxWidth: "100%" }}/><figcaption>{p.caption}</figcaption></figure>)}</div>}</div></section></div>
     <div className="admin-actions" style={{ marginTop: 22 }}><button className="text-button" onClick={history} disabled={busy || historyBusy}>查看历史版本</button><button className="text-button" onClick={manualSnapshot} disabled={busy}>创建手动快照</button>{model.state.publicationState === "PUBLISHED" && <><button className="text-button" onClick={() => stateAction("make-private")} disabled={busy}>转为私密</button><button className="text-button" onClick={() => stateAction("unpublish")} disabled={busy}>撤回发布</button></>}<button className="text-button" style={{ color: "var(--red)" }} disabled={busy} onClick={() => stateAction("trash")}>移入回收站</button></div>
-    <MediaPlacements payload={payload} onChange={next => { setPayload(next); setDirty(true); setMessage(""); }} disabled={busy}/>
-    <dialog ref={settingsDialog} className="editor-dialog" aria-labelledby="settings-heading"><div className="drawer-heading"><h2 id="settings-heading">发布设置</h2><button onClick={() => settingsDialog.current?.close()}>关闭 ×</button></div><label className="form-field"><span>期望可见性（确认发布后生效）</span><select value={payload.desiredVisibility} onChange={e => update("desiredVisibility", e.target.value as "PUBLIC" | "PRIVATE")}><option value="PRIVATE">私密</option><option value="PUBLIC">公开</option></select></label><label className="form-field"><span>发布地址</span><input value={payload.desiredPath} onChange={e => update("desiredPath", e.target.value)} maxLength={500}/></label><label className="form-field"><span>摘要</span><textarea value={payload.summary} onChange={e => update("summary", e.target.value)} maxLength={4000}/></label><label className="form-field"><span>分类</span><select value={payload.categoryId || ""} onChange={e => update("categoryId", e.target.value || null)}><option value="">未分类</option>{categories.filter(c => c.module === payload.module).map(c => <option key={c.id} value={c.id}>{c.parentId ? (categories.find(p => p.id === c.parentId)?.name || "上级分类") + " / " : ""}{c.name}</option>)}</select></label><fieldset className="taxonomy-tags"><legend>标签</legend>{tags.length ? tags.map(t => <label key={t.id}><input type="checkbox" checked={payload.tagIds.includes(t.id)} onChange={e => update("tagIds", e.target.checked ? [...payload.tagIds, t.id] : payload.tagIds.filter(id => id !== t.id))}/>{t.name}</label>) : <p className="muted">尚无标签，可先到分类与标签管理中创建。</p>}</fieldset><p className="notice">设置随草稿保存，未确认发布前不会改变线上版本。</p><div className="dialog-actions"><button className="button primary" onClick={() => settingsDialog.current?.close()}>返回编辑并保存</button></div></dialog>
+    <MediaPlacements payload={payload} onChange={edit} disabled={busy}/>
+    <dialog ref={settingsDialog} className="editor-dialog" aria-labelledby="settings-heading"><div className="drawer-heading"><h2 id="settings-heading">发布设置</h2><button onClick={() => settingsDialog.current?.close()}>关闭 ×</button></div><label className="form-field"><span>期望可见性（确认发布后生效）</span><select value={payload.desiredVisibility} onChange={e => update("desiredVisibility", e.target.value as "PUBLIC" | "PRIVATE")}><option value="PRIVATE">私密</option><option value="PUBLIC">公开</option></select></label><label className="form-field"><span>发布地址</span><input value={payload.desiredPath} onChange={e => update("desiredPath", e.target.value)} maxLength={500}/></label><label className="form-field"><span>摘要</span><textarea value={payload.summary} onChange={e => update("summary", e.target.value)} maxLength={4000}/></label>{payload.type === "ARTICLE" && <SummarySuggestion contentId={model.state.id} title={payload.title} markdown={payload.bodyMarkdown} apply={summary => update("summary", summary)}/>}<label className="form-field"><span>分类</span><select value={payload.categoryId || ""} onChange={e => update("categoryId", e.target.value || null)}><option value="">未分类</option>{categories.filter(c => c.module === payload.module).map(c => <option key={c.id} value={c.id}>{c.parentId ? (categories.find(p => p.id === c.parentId)?.name || "上级分类") + " / " : ""}{c.name}</option>)}</select></label><fieldset className="taxonomy-tags"><legend>标签</legend>{tags.length ? tags.map(t => <label key={t.id}><input type="checkbox" checked={payload.tagIds.includes(t.id)} onChange={e => update("tagIds", e.target.checked ? [...payload.tagIds, t.id] : payload.tagIds.filter(id => id !== t.id))}/>{t.name}</label>) : <p className="muted">尚无标签，可先到分类与标签管理中创建。</p>}</fieldset><p className="notice">设置随草稿保存，未确认发布前不会改变线上版本。</p><div className="dialog-actions"><button className="button primary" onClick={() => settingsDialog.current?.close()}>返回编辑并保存</button></div></dialog>
     <dialog ref={publishDialog} className="editor-dialog" aria-labelledby="publish-heading"><h2 id="publish-heading">确认发布</h2><p className="muted small">将已保存的草稿更新为正式版本。请再次核对可见性和地址。</p>{[["内容", model.draft.payload.title], ["可见性", model.draft.payload.desiredVisibility === "PUBLIC" ? "公开" : "私密"], ["目标地址", model.draft.payload.desiredPath], ["媒体准备", mediaSummary], ["版本确认", `草稿 v${model.draft.revisionNumber} · 线上状态 v${model.state.stateVersion}`]].map(([label, value]) => <div className="confirm-row" key={label}><span>{label}</span><strong>{value || "尚未填写"}</strong></div>)}{mediaCheck?.some(item => item.status !== "READY") && <p className="notice warning" role="alert">仍在处理或暂不可用的图片：{mediaCheck.filter(item => item.status !== "READY").map(item => item.name).join("、")}。请等待处理完成后再发布。</p>}<div className="dialog-actions"><button className="button secondary" onClick={() => publishDialog.current?.close()} disabled={busy}>返回编辑</button><button className="button primary" onClick={publish} disabled={busy || !mediaReady}>{busy ? "正在发布…" : mediaReady ? "确认发布" : "等待图片就绪"}</button></div></dialog>
     <dialog ref={historyDialog} onClose={() => { historyGeneration.current++; setHistoryBusy(false); }} className="editor-dialog" aria-labelledby="history-heading"><h2 id="history-heading">历史版本</h2><p className="muted small">恢复只替换工作草稿，不改变线上内容。</p><p className="small muted">已载入 {revisions.length} 个版本；新增版本可关闭后重新打开查看。</p>{historyError && <p className="notice error" role="alert">{historyError}</p>}{historyBusy && <p role="status">正在读取历史版本…</p>}<div className="history-list">{revisions.map(r => <div key={r.id} className="panel"><h3>{r.revisionKind === "PUBLISHED" ? `正式发布 · 第 ${r.publishedEditionNumber} 版` : "手动快照"}</h3><p className="muted small">历史序号 {r.versionNumber} · {r.payload.title || "未命名草稿"}</p><details><summary className="text-button">查看内容</summary><Markdown body={r.payload.bodyMarkdown} media={{ admin: true, placements: r.payload.placements }}/></details><button className="button secondary" onClick={() => restore(r)} disabled={busy || historyBusy}>恢复到草稿</button></div>)}{!revisions.length && !historyBusy && !historyError && <p>还没有历史版本。</p>}</div><div className="dialog-actions">{historyError && <button className="button secondary" disabled={historyBusy} onClick={() => loadHistory(revisions.length ? historyCursor : null, !!revisions.length)}>重试读取</button>}{historyCursor && !historyError && <button className="button secondary" disabled={historyBusy || busy} onClick={() => loadHistory(historyCursor, true)}>加载较早版本</button>}<button className="button secondary" onClick={() => historyDialog.current?.close()}>关闭</button></div></dialog>
     <dialog ref={conflictDialog} className="editor-dialog" aria-labelledby="conflict-heading"><h2 id="conflict-heading">内容已在另一处更新</h2><p>当前输入仍保留。请比较差异，再决定是否载入服务器版本。</p><h3>本地内容</h3><pre style={{ whiteSpace: "pre-wrap" }}>{payload.title}{"\n\n"}{payload.bodyMarkdown}</pre><h3>服务器内容</h3><pre style={{ whiteSpace: "pre-wrap" }}>{remote?.draft.payload.title}{"\n\n"}{remote?.draft.payload.bodyMarkdown}</pre><div className="dialog-actions"><button className="button secondary" onClick={async () => { try { await navigator.clipboard.writeText(JSON.stringify(payload, null, 2)); setMessage("本地草稿全部字段已复制。"); } catch { setError("无法自动复制，请手动选中本地内容复制。"); } }}>复制本地草稿</button><button className="button primary" onClick={() => { if (remote && confirm("将以服务器版本替换本地未保存内容。请先复制备份，确认继续？")) { accept(remote); conflictDialog.current?.close(); setError(""); } }}>载入服务器版本</button></div></dialog>

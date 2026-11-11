@@ -689,6 +689,10 @@ img {
     padding-inline: var(--space-4);
   }
 
+  .site-header {
+    backdrop-filter: none;
+  }
+
   .site-header > * {
     padding-inline: var(--space-4);
     height: 4rem;
@@ -734,7 +738,7 @@ img {
     background: var(--surface-elevated);
     border: 1px solid var(--surface-muted);
     border-radius: var(--radius-lg);
-    min-width: 12rem;
+    width: min(12rem, calc(100vw - 2rem));
     padding: var(--space-2);
     z-index: 90;
     display: flex;
@@ -757,14 +761,15 @@ img {
   }
 
   .hero {
-    padding-block: var(--space-6);
+    padding-block: 1.75rem 2rem;
     min-height: auto;
+    gap: var(--space-2);
   }
 
   .hero h1 {
-    font-size: var(--text-4xl);
+    font-size: clamp(1.875rem, 8.5vw, 2.5rem);
     line-height: 1.2;
-    margin-block: var(--space-3) var(--space-2);
+    margin-block: var(--space-2);
   }
 
   .mobile-break {
@@ -782,7 +787,7 @@ img {
 
   .hero-actions {
     gap: var(--space-2);
-    margin-top: var(--space-4);
+    margin-top: var(--space-2);
   }
 
   .hero-actions .button {
@@ -796,7 +801,7 @@ img {
 
   .hero-note {
     font-size: 0.65rem;
-    margin-top: var(--space-5);
+    margin-top: var(--space-3);
     letter-spacing: 0.06em;
   }
 
@@ -2322,11 +2327,12 @@ label.media-choice input{position:absolute;margin:var(--space-2);width:1.125rem;
 }
 
 @media(max-width:767px){
+  .form-field input,.form-field select,.form-field textarea{font-size:1rem}
   .editor-top{flex-direction:column}
   .editor-top .editor-buttons{position:fixed;bottom:0;left:0;right:0;background:var(--surface-elevated);border-top:1px solid var(--surface-muted);padding:var(--space-4) var(--space-4) calc(var(--space-4) + env(safe-area-inset-bottom));z-index:50;display:flex;gap:var(--space-3)}
   .editor-top .editor-buttons .button{flex:1;padding:var(--space-2) var(--space-3);font-size:var(--text-xs)}
   .editor-top .editor-buttons .desktop-only{display:none}
-  .editor-textarea{padding:var(--space-4);font-size:var(--text-base)}
+  .editor-textarea{padding:var(--space-4);font-size:1rem}
   .editor-preview{padding:var(--space-4)}
   .editor-title{font-size:var(--text-xl)}
   .settings-drawer{width:100%;padding:var(--space-5);bottom:0}

@@ -88,6 +88,7 @@ model Content {
   updatedAt                     DateTime                @updatedAt @map("updated_at") @db.Timestamptz(3)
   owner                         AdminUser               @relation(fields: [ownerId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   draft                         ContentDraft?
+  interestTopicItems            InterestTopicItem[]
   revisions                     ContentRevision[]       @relation("Revisions")
   publishedRevision             ContentRevision?        @relation("Published", fields: [id, publishedRevisionId], references: [contentId, id], onDelete: Restrict, onUpdate: Restrict)
   publication                   ContentPublication?
@@ -522,4 +523,37 @@ model SystemSetting {
   admin        AdminUser? @relation("SystemSetting_admin", fields: [updatedBy], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@map("system_settings")
+}
+
+model InterestTopic {
+  id               String              @id @db.Uuid
+  slug             String              @unique
+  title            String
+  intro            String
+  isPublic         Boolean             @default(false) @map("is_public")
+  firstPublishedAt DateTime?           @map("first_published_at") @db.Timestamptz(3)
+  version          Int                 @default(1)
+  items            InterestTopicItem[]
+
+  @@map("interest_topics")
+}
+
+model InterestTopicItem {
+  topicId   String        @map("topic_id") @db.Uuid
+  contentId String        @map("content_id") @db.Uuid
+  position  Int
+  topic     InterestTopic @relation(fields: [topicId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  content   Content       @relation(fields: [contentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([topicId, contentId])
+  @@unique([topicId, position])
+  @@index([contentId], map: "interest_topic_items_content_idx")
+  @@map("interest_topic_items")
+}
+
+model AiSummaryUsage {
+  usageDay DateTime @id @map("usage_day") @db.Date
+  requests Int
+
+  @@map("ai_summary_usage")
 }

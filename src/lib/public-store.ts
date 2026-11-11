@@ -59,6 +59,13 @@ export async function publishedPage(input: PublicFilters = {}, reader?: Reader) 
   const page = finishPage(rows.map(row => ({ ...publicationView(row), score: row.score })), query.limit, query.filters);
   return { data: page.data.map(({ score: _score, ...content }) => content), meta: page.meta };
 }
+export async function publishedByIds(ids: string[], reader?: Reader) {
+  if (!ids.length) return [];
+  const rows = await readRows<PublishedRow>(Prisma.sql`SELECT ${columns}, 0 AS score ${currentJoins}
+    WHERE ${publicPredicate} AND c.id IN (${Prisma.join(ids.map(id => Prisma.sql`${id}::uuid`))})`, reader);
+  const byId = new Map(rows.map(row => [row.id, publicationView(row)]));
+  return ids.flatMap(id => { const item = byId.get(id); return item ? [item] : []; });
+}
 export async function publishedById(id: string, reader?: Reader) {
   const rows = await readRows<PublishedRow>(Prisma.sql`SELECT ${columns}, 0 AS score ${currentJoins} WHERE ${publicPredicate} AND c.id = ${id}::uuid LIMIT 2`, reader);
   if (!rows.length) throw new DomainError(404, "NOT_FOUND", "内容不存在");
