@@ -90,8 +90,8 @@ try {
   ];
 
   await mkdir(output, { recursive: true });
-  for (const width of [1440, 390]) {
-    await send("Emulation.setDeviceMetricsOverride", { width, height: width === 390 ? 844 : 900, deviceScaleFactor: 1, mobile: width < 500, screenWidth: width, screenHeight: width === 390 ? 844 : 900 }, session);
+  for (const width of [360, 390, 430, 768, 1024, 1440]) {
+    await send("Emulation.setDeviceMetricsOverride", { width, height: width < 500 ? 844 : 900, deviceScaleFactor: 1, mobile: width < 500, screenWidth: width, screenHeight: width < 500 ? 844 : 900 }, session);
     for (const page of pages) {
       const response = await client.raw(page.url, { redirect: "manual" });
       if (!response.ok) throw new Error('Page "' + page.name + '" returned HTTP ' + response.status);
@@ -118,6 +118,46 @@ try {
   const failed = results.filter(result => result.overflow > 1 || result.undersized.length > 0);
 
   const scenarios: { name: string; passed: boolean; detail: string }[] = [];
+  await navigate(base + "/");
+  await send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] }, session);
+  const reducedMotion = await evaluate(`matchMedia('(prefers-reduced-motion: reduce)').matches &&
+    getComputedStyle(document.documentElement).scrollBehavior === 'auto' &&
+    parseFloat(getComputedStyle(document.querySelector('.desktop-nav a')).transitionDuration) < 0.01`);
+  scenarios.push({ name: "reduced-motion", passed: !!reducedMotion, detail: "Chromium reduced-motion preference disables smooth scrolling and shortens transitions." });
+  await send("Emulation.setEmulatedMedia", { features: [] }, session);
+
+  for (const theme of ["light", "dark"]) {
+    const ratios = await evaluate(`(() => {
+      document.documentElement.dataset.theme = ${JSON.stringify(theme)};
+      const css = getComputedStyle(document.documentElement);
+      const luminance = name => {
+        const channels = css.getPropertyValue(name).trim().slice(1).match(/../g);
+        return channels.reduce((sum, hex, i) => {
+          const value = parseInt(hex, 16) / 255;
+          return sum + [0.2126, 0.7152, 0.0722][i] * (value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
+        }, 0);
+      };
+      return ["--accent-text", "--ink-subtle"].map(text => {
+        const [light, dark] = [luminance(text), luminance("--surface-muted")].sort((a, b) => b - a);
+        return (light + 0.05) / (dark + 0.05);
+      });
+    })()`) as number[];
+    scenarios.push({ name: `contrast-tokens-${theme}`, passed: ratios.every(ratio => ratio >= 4.5), detail: `Accent and secondary text against the muted surface: ${ratios.map(ratio => ratio.toFixed(2)).join(", ")}` });
+  }
+
+  await navigate(base + albumPath);
+  await send("Page.bringToFront", {}, session);
+  await evaluate(`document.querySelector('.image-button')?.focus()`);
+  await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: "\r", unmodifiedText: "\r" }, session);
+  await send("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 }, session);
+  await delay(200);
+  const galleryOpened = await evaluate(`!!document.querySelector('.lightbox[open]')`);
+  await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 }, session);
+  await send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 }, session);
+  await delay(200);
+  const galleryFocus = await evaluate(`!document.querySelector('.lightbox[open]') && document.activeElement === document.querySelector('.image-button')`);
+  scenarios.push({ name: "gallery-keyboard-focus", passed: !!galleryOpened && !!galleryFocus, detail: `openedByEnter=${galleryOpened} focusReturnedByEscape=${galleryFocus}` });
+
   if (contentId) {
     const editorUrl = `${base}/admin/contents/${contentId}`;
     const targetB = await send("Target.createTarget", { url: "about:blank" });
@@ -160,6 +200,53 @@ try {
     await delay(1000);
     const restoredTitle = await evaluateIn(session, "document.querySelector('#content-title')?.value");
     scenarios.push({ name: "back-navigation-recovers-draft", passed: leftEditor && restoredTitle === recoveryText, detail: "Checks the restored title after returning to the editor." });
+
+    const failureFeedback = () => evaluateIn(session, `document.querySelector('[role="alert"]')?.textContent ?? ""`);
+    const titleValue = () => evaluateIn(session, `document.querySelector('#content-title')?.value`);
+    const waitForSave = async () => {
+      for (let attempt = 0; attempt < 60; attempt++) {
+        if (!await evaluateIn(session, `document.querySelector('#content-title')?.disabled`)) return;
+        await delay(100);
+      }
+      throw new Error("Draft save did not finish");
+    };
+
+    const failureTitle = `network recovery ${Date.now()}`;
+    await setTitle(session, failureTitle);
+    const network = { latency: 0, downloadThroughput: -1, uploadThroughput: -1 };
+    await send("Network.emulateNetworkConditions", { ...network, offline: true }, session);
+    try {
+      await clickSave(session);
+      await waitForSave();
+      const passed = String(await failureFeedback()).includes("网络已断开") && await titleValue() === failureTitle;
+      scenarios.push({ name: "offline-save-preserves-input", passed, detail: "Offline save shows an error and retains the draft title." });
+    } finally {
+      await send("Network.emulateNetworkConditions", { ...network, offline: false }, session);
+    }
+
+    await evaluateIn(session, `(() => {
+      const realFetch = window.fetch;
+      window.fetch = (input, init) => {
+        if (init?.method !== "PUT" || !String(input).endsWith("/draft")) return realFetch(input, init);
+        window.fetch = realFetch;
+        return Promise.resolve(new Response("Internal Server Error", { status: 500 }));
+      };
+    })()`);
+    await clickSave(session);
+    await waitForSave();
+    scenarios.push({ name: "http-500-save-preserves-input", passed: String(await failureFeedback()).includes("服务暂时不可用") && await titleValue() === failureTitle, detail: "Injected HTTP 500 shows an error and retains the draft title." });
+
+    await send("Network.emulateNetworkConditions", { offline: false, latency: 1300, downloadThroughput: 50_000, uploadThroughput: 25_000 }, session);
+    try {
+      await clickSave(session);
+      await delay(200);
+      const pending = await evaluateIn(session, `document.querySelector('.editor-status')?.textContent.includes('正在处理')`);
+      await waitForSave();
+      const saved = await evaluateIn(session, `document.body.innerText.includes('草稿已保存')`);
+      scenarios.push({ name: "slow-network-retry-saves-draft", passed: !!pending && !!saved && await titleValue() === failureTitle, detail: "Throttled retry shows progress and then confirms the original draft was saved." });
+    } finally {
+      await send("Network.emulateNetworkConditions", { ...network, offline: false }, session);
+    }
 
     const expiryText = `expiry ${Date.now()}`;
     await setTitle(session, expiryText); await delay(150);

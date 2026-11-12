@@ -29,3 +29,5 @@
 应用第四份迁移后，在独立终端运行 `node integration/summary-stub.mjs`。为本机联调 Web 进程设置 `AI_SUMMARY_ENDPOINT=http://127.0.0.1:3011/summary`，再运行 `node integration/run.mjs v2`。脚本使用测试账号创建专用文章和专题，验证摘要采用后的保存与发布，以及专题排序、成员私密化和撤回。该适配器只用于隔离验收。
 
 上线前仍需根据首发范围关闭第一版剩余验收，检查真实设备与恢复时效。启用 AI 前需要配置并验证实际摘要服务。
+
+2026-11-12：第四份迁移已在本机隔离 `personal_space_test` 应用，V2 端到端测试通过。摘要使用本机测试适配器。详见[首发收尾验收](verification/2026-11-12-first-release.md)。

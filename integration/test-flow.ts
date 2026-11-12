@@ -70,10 +70,18 @@ async function main(){
   const download=await client.raw(`/api/v1/admin/exports/${job.resultResourceId}/download`);assert.equal(download.status,200);assert.equal(download.headers.get("content-type"),"application/zip");state.exportJobId=exportJob.id;pass("reauthenticated export creates once, runs and downloads verified ZIP");
   const exported=await db().operationJob.findUniqueOrThrow({where:{id:exportJob.id}});await db().operationJob.update({where:{id:exportJob.id},data:{result:{...(exported.result as Record<string,any>),expiresAt:new Date(0).toISOString()}}});assert.equal((await client.raw(`/api/v1/admin/exports/${job.resultResourceId}/download`)).status,404);pass("expired export download is refused");
   console.log("Waiting for a fresh MFA window for manual backup");const backupProof=await client.proof("BACKUP_CREATE"), backupJob=(await client.json("/api/v1/admin/backups","POST",undefined,202,{...requestKey(),"X-Reauth-Token":backupProof})).value.data;state.backupJobId=backupJob.id;
-  const backup=backupRuntime();await runBackupJob(backup.config,backup.tools);const completed=(await client.json(`/api/v1/admin/jobs/${backupJob.id}`)).value.data;
-  if(completed.status!=="SUCCEEDED")throw new Error(`Backup did not succeed: ${completed.errorCode}`);state.backupId=completed.resultResourceId;
+  const backup = backupRuntime();
+  const jobUrl = `/api/v1/admin/jobs/${backupJob.id}`;
+  let completed = (await client.json(jobUrl)).value.data;
+  const deadline = Date.now() + 300_000;
+  while (completed.status === "PENDING" && !completed.errorCode && Date.now() < deadline) {
+    if (!await runBackupJob(backup.config, backup.tools)) break;
+    completed = (await client.json(jobUrl)).value.data;
+  }
+  if (completed.status !== "SUCCEEDED") throw new Error(`Backup did not succeed: ${completed.status} ${completed.errorCode ?? ""}`.trim());
+  state.backupId = completed.resultResourceId;
   const backupRecord=(await client.json(`/api/v1/admin/backups/${state.backupId}`)).value.data;assert.equal(backupRecord.localStatus,"SUCCEEDED");assert.equal(backupRecord.integrityStatus,"SUCCEEDED");assert.equal(backupRecord.offsiteStatus,"SUCCEEDED");pass("real pg_dump snapshot and restic S3 backup/check complete independently");
-  const stored=await db().backupRun.findUniqueOrThrow({where:{id:state.backupId}});const directory=(await import("node:path")).dirname(stored.manifestPath!);const drill=await executeRestoreDrill(directory);state.drillId=drill.drillId;pass("real isolated PostgreSQL and S3 restore drill passes counts and reference checks");
+  const stored=await db().backupRun.findUniqueOrThrow({where:{id:state.backupId}});const directory=(await import("node:path")).dirname(stored.manifestPath!);const restoreStartedAt = Date.now(); const drill = await executeRestoreDrill(directory); state.drillId = drill.drillId; state.restoreStartedAt = new Date(restoreStartedAt).toISOString(); state.restoreDurationMs = Date.now() - restoreStartedAt; console.log(`Isolated database and media restore: ${state.restoreDurationMs} ms`);pass("real isolated PostgreSQL and S3 restore drill passes counts and reference checks");
   const logs=(await client.json("/api/v1/admin/audit-logs?limit=100")).value.data;assert.ok(logs.some((row:any)=>row.action==="BACKUP_CREATED"));pass("audit API exposes actual task activity summaries");
   state.passed=true;
 }

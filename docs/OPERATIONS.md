@@ -30,7 +30,7 @@ Web运行npm run dev或生产构建后npm start。媒体处理为npm run worker:
 
 Web提供/health/live（进程存活）与/health/ready（必要配置、数据库、pg_trgm、迁移及关键表；失败503且不暴露细节）。API与安全端点输出每行一个JSON的请求日志，包含requestId、方法、路径、状态与耗时，不记录正文、查询串、Cookie或凭据。正式部署、Caddy、镜像与更新/回退步骤见[上线运行手册](DEPLOYMENT.md)。
 
-浏览器模拟检查：在生产构建运行时执行npm run test:browser。它用本机Chrome无头模式登录真实会话，检查公开/后台页面在1440与390宽度的横向溢出和可见控件44px目标，截图与browser.json写入work/integration/browser。它不替代真实手机、读屏或200%缩放验收。
+浏览器模拟检查：测试 Web 进程运行后执行 npm run test:browser。它用本机 Chrome 无头模式登录真实会话，在 360/390/430/768/1024/1440 六个宽度检查公开和后台页面的横向溢出及已测控件的 44px 目标，并检查编辑器网络故障与恢复、灯箱键盘焦点、减少动画和代表性文字对比度。截图与 browser.json 写入 work/integration/browser。真机、读屏和实际 200% 浏览器缩放仍需按[首发收尾验收](verification/2026-11-12-first-release.md)操作。
 
 导出私有文件根目录EXPORT_DIRECTORY必须是绝对路径，位于Web静态目录之外；默认工程预算64MiB、下载24小时，可用EXPORT_MAX_BYTES/EXPORT_TTL_SECONDS调整。这些不是冻结设计中的备份保留政策。后台“导出与备份”输入当前密码与验证器/恢复码后创建，保存任务链接可继续查看。ZIP保存在任务/执行token独立目录，下载过期后HTTP404；本轮不自动删除过期归档文件。
 
